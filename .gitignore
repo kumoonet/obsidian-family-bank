@@ -1,0 +1,3 @@
+*.bak
+data.json
+.gitignore
