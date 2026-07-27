@@ -1,0 +1,324 @@
+/* ========================================
+   家庭银行 - Obsidian Plugin Styles
+   ======================================== */
+
+.family-bank-view {
+  --fb-primary: #E8730A;
+  --fb-primary-light: #fef3e6;
+  --fb-success: #27ae60;
+  --fb-danger: #e74c3c;
+  --fb-bg: var(--background-secondary);
+  --fb-card: var(--background-primary);
+  --fb-border: var(--background-modifier-border);
+  --fb-text: var(--text-normal);
+  --fb-text-secondary: var(--text-muted);
+  --fb-text-hint: var(--text-faint);
+  padding: 0;
+  overflow-y: auto;
+  height: 100%;
+  font-size: 14px;
+  color: var(--text-normal);
+}
+
+/* 顶部栏+导航 */
+.fb-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--background-primary);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.fb-header {
+  padding: 12px 16px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.fb-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fb-header-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+
+.fb-header-title small {
+  font-size: 11px;
+  color: #E8730A;
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.fb-child-switch {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.fb-nav {
+  display: flex;
+  background: var(--background-primary);
+}
+
+.fb-nav-item {
+  flex: 1;
+  text-align: center;
+  padding: 10px 6px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  transition: none;
+}
+
+.fb-nav-item:hover {
+  color: var(--text-normal);
+  background: var(--background-secondary);
+}
+
+.fb-nav-item.active {
+  color: #E8730A;
+  border-bottom-color: #E8730A;
+  font-weight: 600;
+}
+
+.fb-nav-icon { font-size: 16px; display: block; margin-bottom: 2px; }
+
+/* 页面容器 */
+.fb-page { display: none; padding: 12px 16px; }
+.fb-page.active { display: block; }
+
+/* 卡片 */
+.fb-card {
+  background: var(--background-primary);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.fb-card-title {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+/* 余额 */
+.fb-balance-big {
+  font-size: 40px;
+  font-weight: 800;
+  color: var(--text-normal);
+}
+
+.fb-balance-big .unit {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+
+/* 目标 */
+.fb-goal-bar-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.fb-goal-bar-track {
+  height: 12px;
+  background: var(--background-secondary);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.fb-goal-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #E8730A, #f5a623);
+  border-radius: 99px;
+  transition: width 0.3s;
+}
+
+.fb-goal-empty {
+  font-size: 14px;
+  color: var(--text-muted);
+  padding: 8px 0;
+  text-align: center;
+}
+
+/* 按钮 */
+.fb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 14px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-normal);
+  white-space: nowrap;
+}
+
+.fb-btn:hover { background: var(--background-secondary); }
+
+.fb-btn-primary { background: #E8730A; color: #fff; border-color: #E8730A; }
+.fb-btn-primary:hover { background: #d06800; }
+
+.fb-btn-danger { background: var(--text-error); color: #fff; border-color: var(--text-error); }
+.fb-btn-danger:hover { opacity: 0.85; }
+
+.fb-btn-hint { color: var(--text-muted); border-color: var(--background-modifier-border); }
+.fb-btn-hint:hover { border-color: #ccc; }
+
+.fb-btn-outline { color: var(--text-normal); border-color: var(--background-modifier-border); }
+.fb-btn-outline:hover { background: var(--background-secondary); }
+
+.fb-btn-sm { padding: 4px 10px; font-size: 12px; }
+.fb-btn-block { display: flex; width: 100%; }
+
+/* 表单 */
+.fb-form-group { margin-bottom: 10px; }
+.fb-form-label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500; }
+.fb-form-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  box-sizing: border-box;
+}
+.fb-form-input:focus { outline: none; border-color: #E8730A; }
+
+.fb-form-row { display: flex; gap: 10px; }
+.fb-form-row .fb-form-group { flex: 1; }
+
+/* 定期卡片 */
+.fb-deposit-card {
+  background: var(--background-primary);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 10px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.fb-deposit-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.fb-deposit-principal {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.fb-deposit-rate {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  padding: 3px 8px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+.fb-deposit-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fb-deposit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* 标签选择器 */
+.fb-tag-grid {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.fb-tag-option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border: 1.5px solid var(--background-modifier-border);
+  border-radius: 99px;
+  font-size: 12px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-normal);
+}
+.fb-tag-option.selected,
+.fb-tag-option.active { background: #E8730A; color: #fff; border-color: #E8730A; }
+.fb-tag-option .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+/* 模态弹窗 */
+.fb-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fb-modal-overlay.hidden { display: none; }
+
+.fb-modal {
+  background: var(--background-primary);
+  border-radius: 14px;
+  padding: 20px;
+  width: 90%;
+  max-width: 400px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+}
+
+.fb-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+
+.fb-modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+/* Toast */
+.fb-toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-size: 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  z-index: 2000;
+  border: 1px solid var(--background-modifier-border);
+  transition: opacity 0.3s;
+  opacity: 1;
+}
+.fb-toast.hidden { opacity: 0; }

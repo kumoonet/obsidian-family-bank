@@ -1,0 +1,1508 @@
+'use strict';
+
+var obsidian = require('obsidian');
+
+// ========================================
+// 常量
+// ========================================
+const STORAGE_KEY = 'family_bank_data';
+const DEPOSIT_TYPES = [
+  { id: 'month', name: '月定存', rate: 0.005, rateLabel: '月 0.5%', periodDays: 30, emoji: '🪙' },
+  { id: 'year', name: '年定存', rate: 0.07, rateLabel: '年 7%', periodDays: 365, emoji: '💎' }
+];
+
+// ========================================
+// 工具函数
+// ========================================
+function fmt(v) { return Number(v).toFixed(v % 1 === 0 ? 0 : 1); }
+
+function calcInterest(principal, rate, rateType, fromDate, toDate) {
+  const from = new Date(fromDate);
+  const to = new Date(toDate);
+  const days = (to - from) / (1000 * 60 * 60 * 24);
+  if (days < 0) return { interest: 0, periods: 0, fullPeriods: 0, partialDays: 0, days: 0, periodDays: 0 };
+  const periodDays = rateType === 'month' ? 30 : rateType === 'year' ? 365 : 7;
+  const fullPeriods = Math.floor(days / periodDays);
+  const partialDays = days % periodDays;
+  const interest = fullPeriods > 0 ? principal * rate * fullPeriods : 0;
+  return { interest: Math.round(interest * 100) / 100, fullPeriods, partialDays, days, periodDays };
+}
+
+function mergeDefaults(parsed) {
+  const def = getDefaultData();
+  const merged = { ...def, ...parsed };
+  merged.children = { ...def.children };
+  for (const key of Object.keys(def.children)) {
+    merged.children[key] = { ...def.children[key], ...(parsed.children ? parsed.children[key] || {} : {}) };
+  }
+  return merged;
+}
+
+function getDefaultData() {
+  return {
+    version: 1,
+    currentChild: 'gege',
+    children: {
+      gege: {
+        name: '哥哥', emoji: '👦',
+        records: [], deposits: [],
+        goal: { name: '', target: 0 },
+        settleHistory: [], deductions: [], assetTimeline: []
+      },
+      meimei: {
+        name: '妹妹', emoji: '👧',
+        records: [], deposits: [],
+        goal: { name: '', target: 0 },
+        settleHistory: [], deductions: [], assetTimeline: []
+      }
+    }
+  };
+}
+
+function calcTotal(child) {
+  return child.deposits.reduce(function (s, d) { return s + d.principal; }, 0);
+}
+
+// ========================================
+// 视图
+// ========================================
+var FamilyBankView = (function () { {
+
+  function FamilyBankView(leaf, plugin) {
+    obsidian.ItemView.call(this, leaf);
+    this.plugin = plugin;
+    this.data = getDefaultData();
+    this.currentFilter = 'all';
+    this.selectedDepositType = 'month';
+    this.selectedDepositSource = '📌其他';
+    this.selectedTag = 'study';
+    this.manageChildId = 'gege';
+    this.manageModeActive = false;
+    this.deductionType = 'month';
+    this.deductionMode = 'proportional';
+    this.selectedDepositId = null;
+    this.toastTimer = null;
+  }
+
+  FamilyBankView.prototype = Object.create(obsidian.ItemView.prototype);
+  FamilyBankView.prototype.constructor = FamilyBankView;
+
+  FamilyBankView.prototype.getViewType = function () { return 'family-bank'; };
+  FamilyBankView.prototype.getDisplayText = function () { return '家庭银行'; };
+  FamilyBankView.prototype.getIcon = function () { return 'wallet'; };
+
+  FamilyBankView.prototype.onOpen = function () {
+    var self = this;
+    return this.loadData().then(function () {
+      self.renderShell();
+    });
+  };
+
+  FamilyBankView.prototype.onClose = function () {
+    return Promise.resolve();
+  };
+
+  // ========================================
+  // 数据层
+  // ========================================
+  FamilyBankView.prototype.getDataPath = function () {
+    return '家庭银行数据.json';
+  };
+
+  FamilyBankView.prototype.loadData = function () {
+    var self = this;
+    var path = this.getDataPath();
+    return this.app.vault.adapter.exists(path).then(function (exists) {
+      if (exists) {
+        return self.app.vault.adapter.read(path).then(function (content) {
+          try {
+            self.data = mergeDefaults(JSON.parse(content));
+          } catch(e) {
+            self.data = getDefaultData();
+          }
+        });
+      } else {
+        // 默认写入一个空数据文件
+        self.data = getDefaultData();
+        return self.app.vault.adapter.write(path, JSON.stringify(self.data, null, 2));
+      }
+    });
+  };
+
+  FamilyBankView.prototype.saveData = function () {
+    var self = this;
+    var path = this.getDataPath();
+    return this.app.vault.adapter.write(path, JSON.stringify(this.data, null, 2));
+  };
+
+  FamilyBankView.prototype.getChild = function () {
+    return this.data.children[this.data.currentChild];
+  };
+
+  FamilyBankView.prototype.recordAssetSnapshot = function (child, date) {
+    if (!child.assetTimeline) child.assetTimeline = [];
+    child.assetTimeline.push({ date: date, total: calcTotal(child) });
+  };
+
+  // ========================================
+  // 渲染
+  // ========================================
+  FamilyBankView.prototype.renderShell = function () {
+    var container = this.containerEl;
+    container.empty();
+    container.addClass('family-bank-view');
+
+    var self = this;
+
+    // 壳结构
+    container.innerHTML =
+      '<div class="family-bank-view">' +
+        '<div class="fb-topbar">' +
+          '<div class="fb-header">' +
+            '<div class="fb-header-top">' +
+              '<div class="fb-header-title"><span>家庭银行</span><small>KuMoo</small></div>' +
+            '</div>' +
+            '<div class="fb-child-switch" id="fb-childSwitch"></div>' +
+          '</div>' +
+          '<div class="fb-nav" id="fb-nav">' +
+            '<div class="fb-nav-item active" data-page="overview"><span class="fb-nav-icon">📊</span>看板</div>' +
+            '<div class="fb-nav-item" data-page="deposits"><span class="fb-nav-icon">💳</span>理财</div>' +
+            '<div class="fb-nav-item" data-page="manage"><span class="fb-nav-icon">⚙️</span>管理</div>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="fb-page active" id="fb-pageOverview">' +
+          '<div class="fb-card">' +
+            '<div class="fb-card-title">总资产（年定存 + 月定存）</div>' +
+            '<div class="fb-balance-big" id="fb-totalBalance">0 <span class="unit">元</span></div>' +
+          '</div>' +
+          '<div class="fb-card">' +
+            '<div class="fb-card-title">📈 资产走势</div>' +
+            '<div style="position:relative;">' +
+              '<canvas id="fb-assetChart" width="440" height="220" style="width:100%;height:220px;border-radius:8px;cursor:crosshair;"></canvas>' +
+              '<div id="fb-chartTooltip" style="display:none;position:absolute;background:#333;color:#fff;font-size:12px;padding:6px 10px;border-radius:6px;pointer-events:none;white-space:nowrap;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,0.2);"></div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="fb-card">' +
+            '<div class="fb-card-title">🥧 定存占比</div>' +
+            '<div style="display:flex;align-items:center;gap:16px;">' +
+              '<canvas id="fb-pieChart" width="120" height="120" style="width:120px;height:120px;flex-shrink:0;"></canvas>' +
+              '<div id="fb-pieLegend" style="font-size:13px;flex:1;"></div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="fb-card">' +
+            '<div class="fb-card-title">👥 两个孩子对比</div>' +
+            '<div id="fb-comparisonView"></div>' +
+          '</div>' +
+          '<div class="fb-card" id="fb-goalCard">' +
+            '<div class="fb-card-title">🎯 攒钱目标</div>' +
+            '<div id="fb-goalContent"></div>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="fb-page" id="fb-pageDeposits">' +
+          '<div style="margin-bottom:12px;">' +
+            '<button class="fb-btn fb-btn-primary fb-btn-block" onclick="window.__fb.showDepositModal()">📥 新增定期存款</button>' +
+          '</div>' +
+          '<div id="fb-depositsList"></div>' +
+        '</div>' +
+
+        '<div class="fb-page" id="fb-pageManage">' +
+          '<div id="fb-manageGate" class="fb-card" style="text-align:center;padding:32px 20px;">' +
+            '<div style="font-size:48px;margin-bottom:12px;">🔒</div>' +
+            '<div style="font-size:16px;font-weight:600;margin-bottom:8px;">家长管理模式</div>' +
+            '<div style="font-size:13px;color:var(--text-muted);margin-bottom:20px;">设定目标、扣减定存、数据备份</div>' +
+            '<button class="fb-btn fb-btn-primary fb-btn-block" onclick="window.__fb.enterManageMode()">进入管理模式</button>' +
+          '</div>' +
+          '<div id="fb-manageContent" style="display:none;">' +
+            '<div class="fb-card-title" style="margin:12px 0 8px;">🎯 设定目标</div>' +
+            '<div class="fb-card">' +
+              '<div class="fb-form-row">' +
+                '<div class="fb-form-group"><label class="fb-form-label">目标名称</label><input class="fb-form-input" type="text" id="fb-goalName" placeholder="例如：乐高城堡"></div>' +
+                '<div class="fb-form-group"><label class="fb-form-label">目标金额 (元)</label><input class="fb-form-input" type="number" id="fb-goalTarget" placeholder="例如：2000" step="1"></div>' +
+              '</div>' +
+              '<div style="display:flex;gap:10px;margin-top:8px;">' +
+                '<button class="fb-btn fb-btn-primary fb-btn-block" onclick="window.__fb.setGoal()">✓ 保存目标</button>' +
+                '<button class="fb-btn fb-btn-danger fb-btn-block" onclick="window.__fb.deleteGoal()" id="fb-deleteGoalBtn">🗑️ 删除目标</button>' +
+              '</div>' +
+            '</div>' +
+
+            '<div class="fb-card-title" style="margin:12px 0 8px;">⚠️ 定存扣减</div>' +
+            '<div class="fb-card">' +
+              '<div class="fb-form-group"><label class="fb-form-label">定存类型</label><div style="display:flex;gap:10px;">' +
+                '<button class="fb-btn fb-btn-outline fb-btn-block" id="fb-ddTypeMonth" onclick="window.__fb.selectDeductionType(\'month\')">🪙 月定存</button>' +
+                '<button class="fb-btn fb-btn-outline fb-btn-block" id="fb-ddTypeYear" onclick="window.__fb.selectDeductionType(\'year\')">💎 年定存</button>' +
+              '</div></div>' +
+              '<div class="fb-form-group"><label class="fb-form-label">扣减方式</label><div style="display:flex;gap:10px;">' +
+                '<button class="fb-btn fb-btn-primary fb-btn-block" id="fb-ddModeProp" onclick="window.__fb.selectDeductionMode(\'proportional\')">📊 按比例分摊</button>' +
+                '<button class="fb-btn fb-btn-outline fb-btn-block" id="fb-ddModeSpecific" onclick="window.__fb.selectDeductionMode(\'specific\')">📌 指定某笔</button>' +
+              '</div></div>' +
+              '<div class="fb-form-group" id="fb-ddSpecificSelect" style="display:none;"><label class="fb-form-label">选择要扣减的定存</label><div id="fb-ddSpecificList"></div></div>' +
+              '<div class="fb-form-row">' +
+                '<div class="fb-form-group"><label class="fb-form-label">扣减原因</label><input class="fb-form-input" type="text" id="fb-ddReason" placeholder="例如：未完成作业"></div>' +
+                '<div class="fb-form-group"><label class="fb-form-label">金额 (元)</label><input class="fb-form-input" type="number" id="fb-ddAmount" placeholder="" step="0.01" min="0"></div>' +
+              '</div>' +
+              '<button class="fb-btn fb-btn-danger fb-btn-block" onclick="window.__fb.confirmDeduction()" style="margin-top:4px;">⚠️ 确认扣减</button>' +
+              '<div style="margin-top:8px;border-top:1px solid var(--background-modifier-border);padding-top:8px;"><strong style="font-size:13px;">扣减记录</strong><div id="fb-ddHistory"></div></div>' +
+            '</div>' +
+
+            '<div class="fb-card-title" style="margin:12px 0 8px;">💳 定期存款管理</div>' +
+            '<div class="fb-card" id="fb-manageDepositsList"></div>' +
+
+            '<div class="fb-card-title" style="margin:12px 0 8px;">💾 数据备份</div>' +
+            '<div class="fb-card">' +
+              '<div style="display:flex;flex-wrap:wrap;gap:8px;">' +
+                '<button class="fb-btn fb-btn-primary" onclick="window.__fb.exportData()">📥 导出（同步用）</button>' +
+                '<button class="fb-btn fb-btn-outline" onclick="document.getElementById(\'fb-importFile\').click()">📤 导入恢复</button>' +
+                '<button class="fb-btn fb-btn-danger" onclick="window.__fb.resetAllData()">🗑️ 清零</button>' +
+              '</div>' +
+              '<input type="file" id="fb-importFile" accept=".json" style="display:none" onchange="window.__fb.importData(event)">' +
+              '<div style="font-size:12px;color:var(--text-muted);margin-top:8px;">📥 导出 → 下载「家庭银行数据.json」到电脑，可跨设备同步。<br>📤 导入恢复 → 选择其他设备导出的 .json 文件，覆盖当前数据。</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="fb-modal-overlay hidden" id="fb-modalOverlay"><div class="fb-modal" id="fb-modalContent"></div></div>' +
+      '<div class="fb-toast hidden" id="fb-toast"></div>';
+
+    // 导航事件
+    container.querySelectorAll('#fb-nav .fb-nav-item').forEach(function (el) {
+      el.addEventListener('click', function () {
+        self.switchPage(this.dataset.page);
+      });
+    });
+
+    // 暴露给全局
+    window.__fb = this;
+
+    // 初始化
+    this.renderChildSwitch();
+    this.renderOverview();
+    this.renderDeposits();
+    if (this.manageModeActive) {
+      this.renderManageDeposits();
+      this.renderDeductionHistory();
+    }
+  };
+
+  // ========================================
+  // 导航切换
+  // ========================================
+  FamilyBankView.prototype.switchPage = function (pageId) {
+    var pages = this.containerEl.querySelectorAll('.fb-page');
+    var navs = this.containerEl.querySelectorAll('#fb-nav .fb-nav-item');
+    pages.forEach(function (p) { p.classList.remove('active'); });
+    navs.forEach(function (n) { n.classList.remove('active'); });
+
+    var pageEl = document.getElementById('fb-page' + pageId.charAt(0).toUpperCase() + pageId.slice(1));
+    if (pageEl) pageEl.classList.add('active');
+    var navEl = this.containerEl.querySelector('#fb-nav .fb-nav-item[data-page="' + pageId + '"]');
+    if (navEl) navEl.classList.add('active');
+
+    if (pageId === 'deposits') this.renderDeposits();
+    if (pageId === 'manage' && this.manageModeActive) {
+      this.renderManageDeposits();
+      this.renderDeductionHistory();
+    }
+  };
+
+  // ========================================
+  // 孩子切换
+  // ========================================
+  FamilyBankView.prototype.renderChildSwitch = function () {
+    var self = this;
+    var el = document.getElementById('fb-childSwitch');
+    if (!el) return;
+    el.innerHTML = Object.entries(this.data.children).map(function (kv) {
+      var id = kv[0], c = kv[1];
+      return '<button class="fb-btn ' + (id === self.data.currentChild ? 'fb-btn-primary' : 'fb-btn-outline') + '" onclick="window.__fb.switchChild(\'' + id + '\')">' + c.emoji + ' ' + c.name + '</button>';
+    }).join('');
+  };
+
+  FamilyBankView.prototype.switchChild = function (id) {
+    this.data.currentChild = id;
+    this.saveData();
+    this.renderChildSwitch();
+    this.renderOverview();
+    if (document.getElementById('fb-pageDeposits').classList.contains('active')) this.renderDeposits();
+    if (this.manageModeActive) {
+      this.renderManageDeposits();
+      this.renderDeductionHistory();
+    }
+  };
+
+  // ========================================
+  // 看板
+  // ========================================
+  FamilyBankView.prototype.renderOverview = function () {
+    var child = this.getChild();
+    var total = calcTotal(child);
+
+    var balanceEl = document.getElementById('fb-totalBalance');
+    if (balanceEl) balanceEl.innerHTML = fmt(total) + ' <span class="unit">元</span>';
+
+    // 目标
+    var goalEl = document.getElementById('fb-goalContent');
+    if (goalEl) {
+      if (child.goal && child.goal.name && child.goal.target > 0) {
+        var pct = Math.min((total / child.goal.target) * 100, 100);
+        goalEl.innerHTML =
+          '<div class="fb-goal-bar">' +
+            '<div class="fb-goal-bar-header"><span>🎯 ' + child.goal.name + '</span><span>' + fmt(total) + ' / ' + fmt(child.goal.target) + ' 元 (' + fmt(pct) + '%)</span></div>' +
+            '<div class="fb-goal-bar-track"><div class="fb-goal-bar-fill" style="width:' + pct + '%"></div></div>' +
+          '</div>';
+      } else {
+        goalEl.innerHTML = '<div class="fb-goal-empty">还没设定目标，在「管理」页设置一个吧 🎯</div>';
+      }
+    }
+
+    this.drawAssetChart(child);
+    this.drawPieChart(child);
+    this.renderComparison();
+  };
+
+  // ========================================
+  // 走势图
+  // ========================================
+  FamilyBankView.prototype.drawAssetChart = function (child) {
+    var canvas = document.getElementById('fb-assetChart');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    var points = (child.assetTimeline || []).map(function (p) { return { date: p.date, total: p.total }; }).sort(function (a, b) { return a.date.localeCompare(b.date); });
+
+    if (points.length === 0 && child.deposits.length > 0) {
+      var events = [];
+      var allDeductions = child.deductions || [];
+      child.deposits.forEach(function (d) {
+        var initial = d.principal;
+        allDeductions.forEach(function (ded) {
+          var detail = ded.details.find(function (x) { return x.depositId === d.id; });
+          if (detail) initial += detail.deducted;
+        });
+        events.push({ date: d.startDate, delta: initial });
+      });
+      allDeductions.forEach(function (ded) { events.push({ date: ded.date, delta: -ded.amount }); });
+      events.sort(function (a, b) { return a.date.localeCompare(b.date); });
+      var running = 0;
+      events.forEach(function (e) {
+        running += e.delta;
+        points.push({ date: e.date, total: Math.round(running * 100) / 100 });
+      });
+    }
+
+    var today = new Date().toISOString().slice(0, 10);
+    var currentTotal = calcTotal(child);
+    points.push({ date: today, total: currentTotal });
+
+    var merged = [];
+    points.forEach(function (p) {
+      var existing = merged.find(function (m) { return m.date === p.date; });
+      if (existing) existing.total = p.total;
+      else merged.push(p);
+    });
+
+    if (merged.length < 2) {
+      ctx.fillStyle = '#999';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('存入定期后开始显示走势', W / 2, H / 2);
+      return;
+    }
+
+    var pad = { t: 20, r: 20, b: 30, l: 50 };
+    var chartW = W - pad.l - pad.r;
+    var chartH = H - pad.t - pad.b;
+    var totals = merged.map(function (p) { return p.total; });
+    var maxVal = Math.max.apply(null, totals.concat([1]));
+    var minVal = Math.min.apply(null, totals.concat([0]));
+    var range = maxVal - minVal || 1;
+
+    ctx.strokeStyle = '#eee';
+    ctx.lineWidth = 1;
+    for (var i = 0; i <= 4; i++) {
+      var gy = pad.t + chartH * (1 - i / 4);
+      ctx.beginPath();
+      ctx.moveTo(pad.l, gy);
+      ctx.lineTo(W - pad.r, gy);
+      ctx.stroke();
+      ctx.fillStyle = '#999';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(fmt(minVal + range * i / 4), pad.l - 6, gy + 4);
+    }
+
+    var xScale = chartW / (merged.length - 1);
+
+    // 结息标记
+    var settleDates = (child.settleHistory || []).map(function (h) { return h.settleDate; });
+    var uniqueSettleDates = Array.from(new Set(settleDates));
+    uniqueSettleDates.forEach(function (sd) {
+      var nearest = -1, minDist = Infinity;
+      merged.forEach(function (p, i) {
+        var dist = Math.abs(p.date.localeCompare(sd));
+        if (dist < minDist) { minDist = dist; nearest = i; }
+      });
+      if (nearest >= 0 && minDist <= 1) {
+        var sx = pad.l + nearest * xScale;
+        var sy = pad.t + chartH * (1 - (merged[nearest].total - minVal) / range);
+        ctx.beginPath();
+        ctx.arc(sx, sy - 14, 5, 0, Math.PI * 2);
+        ctx.fillStyle = '#27ae60';
+        ctx.fill();
+        ctx.fillStyle = '#27ae60';
+        ctx.font = '8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('息', sx, sy - 16);
+      }
+    });
+
+    // 折线
+    ctx.beginPath();
+    ctx.strokeStyle = '#E8730A';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    merged.forEach(function (p, i) {
+      var x = pad.l + i * xScale;
+      var y = pad.t + chartH * (1 - (p.total - minVal) / range);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // 数据点
+    merged.forEach(function (p, i) {
+      var x = pad.l + i * xScale;
+      var y = pad.t + chartH * (1 - (p.total - minVal) / range);
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#E8730A';
+      ctx.fill();
+    });
+
+    // X轴标签
+    var step = Math.max(1, Math.floor(merged.length / 5));
+    ctx.fillStyle = '#999';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    merged.forEach(function (p, i) {
+      if (i % step === 0 || i === merged.length - 1) {
+        ctx.fillText(p.date.slice(0, 7), pad.l + i * xScale, H - 6);
+      }
+    });
+
+    // tooltip
+    var plottedPoints = merged.map(function (p, i) {
+      return {
+        date: p.date, total: p.total,
+        x: pad.l + i * xScale,
+        y: pad.t + chartH * (1 - (p.total - minVal) / range)
+      };
+    });
+    var settleMap = {};
+    (child.settleHistory || []).forEach(function (h) {
+      settleMap[h.settleDate] = (settleMap[h.settleDate] || 0) + h.totalInterest;
+    });
+
+    var tooltip = document.getElementById('fb-chartTooltip');
+    if (!tooltip) return;
+
+    var self = this;
+    canvas.onmousemove = function (e) {
+      var rect = canvas.getBoundingClientRect();
+      var scaleX = canvas.width / rect.width;
+      var mx = (e.clientX - rect.left) * scaleX;
+      var nearest = 0, minDist = Infinity;
+      plottedPoints.forEach(function (pt, i) {
+        var dist = Math.abs(pt.x - mx);
+        if (dist < minDist) { minDist = dist; nearest = i; }
+      });
+      if (minDist > chartW / (merged.length - 1) * 1.5) { tooltip.style.display = 'none'; return; }
+
+      var pt = plottedPoints[nearest];
+      var settleAmount = settleMap[pt.date];
+      var settleLabel = settleAmount ? ' | 💰结息 +' + fmt(settleAmount) + ' 元' : '';
+      tooltip.textContent = pt.date + '  总资产 ' + fmt(pt.total) + ' 元' + settleLabel;
+      tooltip.style.display = 'block';
+      var tw = tooltip.offsetWidth;
+      var tx = e.clientX - rect.left - tw / 2;
+      if (tx < 0) tx = 0;
+      if (tx + tw > rect.width) tx = rect.width - tw;
+      tooltip.style.left = tx + 'px';
+      tooltip.style.top = (e.clientY - rect.top - 30) + 'px';
+    };
+    canvas.onmouseleave = function () { tooltip.style.display = 'none'; };
+  };
+
+  // ========================================
+  // 饼图
+  // ========================================
+  FamilyBankView.prototype.drawPieChart = function (child) {
+    var canvas = document.getElementById('fb-pieChart');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var size = canvas.width;
+    var cx = size / 2, cy = size / 2, r = size / 2 - 5;
+
+    var monthTotal = child.deposits.filter(function (d) { return d.rateType === 'month'; }).reduce(function (s, d) { return s + d.principal; }, 0);
+    var yearTotal = child.deposits.filter(function (d) { return d.rateType === 'year'; }).reduce(function (s, d) { return s + d.principal; }, 0);
+    var total = monthTotal + yearTotal;
+
+    ctx.clearRect(0, 0, size, size);
+
+    if (total === 0) {
+      ctx.fillStyle = '#eee';
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#999'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('暂无数据', cx, cy + 4);
+      var legend = document.getElementById('fb-pieLegend');
+      if (legend) legend.innerHTML = '<div style="color:var(--text-muted);">暂无定存数据</div>';
+      return;
+    }
+
+    var slices = [
+      { value: monthTotal, color: '#E8730A', label: '月定存' },
+      { value: yearTotal, color: '#F5A623', label: '年定存' }
+    ];
+    var pctMonth = (monthTotal / total * 100).toFixed(1);
+    var pctYear = (yearTotal / total * 100).toFixed(1);
+
+    var startAngle = -Math.PI / 2;
+    slices.forEach(function (slice) {
+      if (slice.value <= 0) return;
+      var angle = (slice.value / total) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, startAngle, startAngle + angle);
+      ctx.closePath();
+      ctx.fillStyle = slice.color;
+      ctx.fill();
+      startAngle += angle;
+    });
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+
+    ctx.fillStyle = '#1a1a1a';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(fmt(total), cx, cy + 5);
+
+    var legend = document.getElementById('fb-pieLegend');
+    if (legend) {
+      legend.innerHTML =
+        '<div style="display:flex;flex-direction:column;gap:6px;">' +
+          '<div><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#E8730A;margin-right:6px;"></span>月定存 <strong>' + fmt(monthTotal) + '</strong> 元 (' + pctMonth + '%)</div>' +
+          '<div><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#F5A623;margin-right:6px;"></span>年定存 <strong>' + fmt(yearTotal) + '</strong> 元 (' + pctYear + '%)</div>' +
+        '</div>';
+    }
+  };
+
+  // ========================================
+  // 对比
+  // ========================================
+  FamilyBankView.prototype.renderComparison = function () {
+    var el = document.getElementById('fb-comparisonView');
+    if (!el) return;
+    var entries = Object.entries(this.data.children);
+    var items = entries.map(function (kv) {
+      return { id: kv[0], name: kv[1].name, emoji: kv[1].emoji, total: calcTotal(kv[1]) };
+    });
+    var maxTotal = Math.max.apply(null, items.map(function (x) { return x.total; }).concat([1]));
+    items.sort(function (a, b) { return b.total - a.total; });
+
+    var html = '';
+    items.forEach(function (item, i) {
+      var pct = (item.total / maxTotal * 100).toFixed(0);
+      var medal = i === 0 ? '🥇' : (i === 1 && items[0].total !== items[1].total ? '🥈' : '');
+      html +=
+        '<div style="margin-bottom:10px;">' +
+          '<div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:4px;">' +
+            '<span>' + medal + ' ' + item.emoji + ' ' + item.name + '</span>' +
+            '<span style="font-weight:600;">' + fmt(item.total) + ' 元</span>' +
+          '</div>' +
+          '<div style="height:24px;background:var(--background-secondary);border-radius:99px;overflow:hidden;">' +
+            '<div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#E8730A,#F5A623);border-radius:99px;display:flex;align-items:center;padding-left:8px;min-width:' + (pct > 0 ? '30px' : '0') + ';">' +
+              '<span style="color:white;font-size:11px;font-weight:600;">' + pct + '</span><span style="color:white;font-size:10px;">%</span>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+    });
+    if (items.length >= 2 && items[0].total > 0) {
+      html += '<div style="text-align:center;font-size:12px;color:var(--text-muted);margin-top:2px;">' + items[0].emoji + ' ' + items[0].name + ' 领先 ' + fmt(items[0].total - items[1].total) + ' 元</div>';
+    }
+    el.innerHTML = html;
+  };
+
+  // ========================================
+  // Toast & Modal
+  // ========================================
+  FamilyBankView.prototype.showToast = function (msg) {
+    var el = document.getElementById('fb-toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(function () {
+      el.classList.add('hidden');
+    }, 2500);
+  };
+
+  FamilyBankView.prototype.closeModal = function () {
+    var el = document.getElementById('fb-modalOverlay');
+    if (el) el.classList.add('hidden');
+  };
+
+  // ========================================
+  // 存入定期
+  // ========================================
+  FamilyBankView.prototype.showDepositModal = function () {
+    var today = new Date().toISOString().slice(0, 10);
+    var modal = document.getElementById('fb-modalContent');
+    modal.innerHTML =
+      '<div class="fb-modal-title">📥 新增定期存款</div>' +
+      '<div class="fb-form-group"><label class="fb-form-label">存入金额 (元)</label><input class="fb-form-input" type="number" id="fb-depPrincipal" placeholder="最少 10 元" min="10" step="1"></div>' +
+      '<div class="fb-form-group"><label class="fb-form-label">存入类型</label><div style="display:flex;gap:10px;">' +
+        '<button class="fb-btn fb-btn-outline fb-btn-block" id="fb-depTypeMonth" onclick="window.__fb.selectDepositType(\'month\')">🪙 月定存 0.5%/月</button>' +
+        '<button class="fb-btn fb-btn-outline fb-btn-block" id="fb-depTypeYear" onclick="window.__fb.selectDepositType(\'year\')">💎 年定存 7%/年</button>' +
+      '</div></div>' +
+      '<div class="fb-form-group"><label class="fb-form-label">起息日</label><input class="fb-form-input" type="date" id="fb-depStartDate" value="' + today + '"></div>' +
+      '<div class="fb-form-group"><label class="fb-form-label">来源（选填）</label><div style="display:flex;gap:8px;flex-wrap:wrap;" id="fb-sourceSelector">' +
+        '<button class="fb-tag-option" data-source="🧧压岁钱" onclick="window.__fb.selectDepositSource(\'🧧压岁钱\')"><span class="dot" style="background:#E74C3C"></span> 🧧 压岁钱</button>' +
+        '<button class="fb-tag-option" data-source="💵零花钱" onclick="window.__fb.selectDepositSource(\'💵零花钱\')"><span class="dot" style="background:#5CB85C"></span> 💵 零花钱</button>' +
+        '<button class="fb-tag-option" data-source="🌟奖励" onclick="window.__fb.selectDepositSource(\'🌟奖励\')"><span class="dot" style="background:#F5A623"></span> 🌟 奖励</button>' +
+        '<button class="fb-tag-option" data-source="📌其他" onclick="window.__fb.selectDepositSource(\'📌其他\')"><span class="dot" style="background:#999"></span> 📌 其他</button>' +
+      '</div></div>' +
+      '<div class="fb-modal-actions">' +
+        '<button class="fb-btn fb-btn-hint fb-btn-block" onclick="window.__fb.closeModal()">取消</button>' +
+        '<button class="fb-btn fb-btn-primary fb-btn-block" onclick="window.__fb.confirmDeposit()">确认存入</button>' +
+      '</div>';
+    document.getElementById('fb-modalOverlay').classList.remove('hidden');
+    this.selectDepositType('month');
+    this.selectedDepositSource = '📌其他';
+    var self = this;
+    document.querySelectorAll('#fb-sourceSelector .fb-tag-option').forEach(function (b) {
+      b.classList.toggle('selected', b.dataset.source === self.selectedDepositSource);
+    });
+  };
+
+  FamilyBankView.prototype.selectDepositType = function (type) {
+    this.selectedDepositType = type;
+    document.getElementById('fb-depTypeMonth').className = type === 'month' ? 'fb-btn fb-btn-primary fb-btn-block' : 'fb-btn fb-btn-outline fb-btn-block';
+    document.getElementById('fb-depTypeYear').className = type === 'year' ? 'fb-btn fb-btn-primary fb-btn-block' : 'fb-btn fb-btn-outline fb-btn-block';
+  };
+
+  FamilyBankView.prototype.selectDepositSource = function (source) {
+    this.selectedDepositSource = source;
+    var self = this;
+    document.querySelectorAll('#fb-sourceSelector .fb-tag-option').forEach(function (b) {
+      b.classList.toggle('selected', b.dataset.source === source);
+    });
+  };
+
+  FamilyBankView.prototype.confirmDeposit = function () {
+    var principal = parseFloat(document.getElementById('fb-depPrincipal').value);
+    var startDate = document.getElementById('fb-depStartDate').value;
+    if (!principal || principal < 10) { this.showToast('最少存入 10 元'); return; }
+    if (!startDate) { this.showToast('请选择起息日'); return; }
+
+    var typeConfig = DEPOSIT_TYPES.find(function (t) { return t.id === this.selectedDepositType; }.bind(this));
+    var child = this.getChild();
+    child.deposits.push({
+      id: Date.now(), principal: principal, rate: typeConfig.rate, rateType: typeConfig.id,
+      startDate: startDate, lastSettledDate: startDate, settledTotal: 0, source: this.selectedDepositSource
+    });
+    this.recordAssetSnapshot(child, startDate);
+    var self = this;
+    this.saveData().then(function () {
+      self.closeModal();
+      if (document.getElementById('fb-pageDeposits').classList.contains('active')) self.renderDeposits();
+      self.renderOverview();
+      self.showToast('✓ 存入' + typeConfig.name + ' ' + fmt(principal) + ' 元');
+    });
+  };
+
+  };
+
+  // ========================================
+  // 渲染：理财
+  // ========================================
+  FamilyBankView.prototype.renderDeposits = function () {
+    var child = this.getChild();
+    var el = document.getElementById('fb-depositsList');
+    if (!el) return;
+
+    var groups = {};
+    child.deposits.forEach(function (d) {
+      if (!groups[d.rateType]) groups[d.rateType] = [];
+      groups[d.rateType].push(d);
+    });
+
+    var typesWithData = DEPOSIT_TYPES.filter(function (t) { return groups[t.id] && groups[t.id].length > 0; });
+
+    if (typesWithData.length === 0) {
+      el.innerHTML = '<div style="text-align:center;padding:32px 0;color:var(--text-muted);"><div style="font-size:48px;margin-bottom:8px;">🏦</div><div>没有定期存款，去存一笔吧</div></div>';
+      return;
+    }
+
+    el.innerHTML = typesWithData.map(function (t) {
+      var items = groups[t.id];
+      var totalPrincipal = items.reduce(function (s, x) { return s + x.principal; }, 0);
+      var totalSettled = items.reduce(function (s, x) { return s + (x.settledTotal || 0); }, 0);
+      var totalDeductions = (child.deductions || []).filter(function (d) { return d.typeId === t.id; }).reduce(function (s, d) { return s + d.amount; }, 0);
+      var earliestDate = items.map(function (x) { return x.startDate; }).sort()[0];
+      var count = items.length;
+
+      return '<div class="fb-deposit-card">' +
+        '<div class="fb-deposit-card-header">' +
+          '<div><div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">' + t.emoji + ' ' + t.name + '</div>' +
+          '<div class="fb-deposit-principal">' + fmt(totalPrincipal) + ' <span style="font-size:14px;color:var(--text-muted);font-weight:400">元</span></div></div>' +
+          '<div class="fb-deposit-rate">' + t.rateLabel + '</div>' +
+        '</div>' +
+        '<div class="fb-deposit-meta"><span>📅 最早起息日 ' + earliestDate + '</span><span>💰 已结算利息 <strong style="color:#E8730A">' + fmt(totalSettled) + ' 元</strong></span></div>' +
+        '<div class="fb-deposit-meta" style="margin-top:4px;"><span>📝 共 <strong>' + count + '</strong> 笔存入</span>' + (totalDeductions > 0 ? '<span style="color:var(--text-error);">⚠️ 累计扣减 <strong>' + fmt(totalDeductions) + ' 元</strong></span>' : '') + '</div>' +
+        '<div class="fb-deposit-actions">' +
+          '<button class="fb-btn fb-btn-outline fb-btn-sm" onclick="window.__fb.showSettleModal(\'' + t.id + '\')">💰 结算利息</button>' +
+          '<button class="fb-btn fb-btn-outline fb-btn-sm" onclick="window.__fb.showDepositDetail(\'' + t.id + '\')">📋 明细 (' + count + ')</button>' +
+          '<button class="fb-btn fb-btn-hint fb-btn-sm" onclick="window.__fb.showSettleHistory(\'' + t.id + '\')">📜 结息记录</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  };
+
+  // ========================================
+  // 理财操作：结算利息（弹窗+确认）
+  // ========================================
+  FamilyBankView.prototype.showSettleModal = function (typeId) {
+    var child = this.getChild();
+    var typeConfig = DEPOSIT_TYPES.find(function (t) { return t.id === typeId; });
+    var depositsOfType = child.deposits.filter(function (d) { return d.rateType === typeId; });
+    if (depositsOfType.length === 0) { this.showToast('该类型无定期存款'); return; }
+
+    var today = new Date().toISOString().slice(0, 10);
+    var self = this;
+
+    function renderPreview(settleDate) {
+      var totalInterest = 0;
+      var rows = '';
+      var hasAny = false;
+      depositsOfType.forEach(function (d) {
+        var result = calcInterest(d.principal, d.rate, d.rateType, d.lastSettledDate || d.startDate, settleDate);
+        if (result.fullPeriods > 0) {
+          hasAny = true;
+          totalInterest += result.interest;
+          rows += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--background-modifier-border);font-size:13px;"><span>' + fmt(d.principal) + ' 元 · 起息 ' + d.startDate + '</span><span style="color:#E8730A;font-weight:600;">+' + fmt(result.interest) + ' 元 (' + result.fullPeriods + '期)</span></div>';
+        }
+      });
+      return { html: rows, totalInterest: totalInterest, hasAny: hasAny };
+    }
+
+    var preview = renderPreview(today);
+    var modal = document.getElementById('fb-modalContent');
+    modal.innerHTML =
+      '<div class="fb-modal-title">💰 ' + typeConfig.name + ' · 结算利息</div>' +
+      '<div class="fb-form-group"><label class="fb-form-label">结息日期</label><input class="fb-form-input" type="date" id="fb-settleDate" value="' + today + '" onchange="window.__fb.refreshSettlePreview(\'' + typeId + '\')"></div>' +
+      '<div style="background:var(--background-secondary);border-radius:10px;padding:12px;margin-bottom:8px;">' +
+        '<div style="font-size:13px;color:var(--text-muted);margin-bottom:6px;">📋 本次结息明细</div>' +
+        '<div id="fb-settlePreviewBody">' + (preview.hasAny ? preview.html : '<div style="color:var(--text-muted);font-size:13px;padding:6px 0;">暂无满周期的定存可结息</div>') + '</div>' +
+        (preview.hasAny ? '<div style="display:flex;justify-content:space-between;margin-top:6px;padding-top:6px;border-top:1px solid var(--background-modifier-border);font-size:14px;font-weight:600;"><span>总计</span><span style="color:#E8730A;">+' + fmt(preview.totalInterest) + ' 元</span></div>' : '') +
+      '</div>' +
+      '<div class="fb-modal-actions">' +
+        '<button class="fb-btn fb-btn-hint fb-btn-block" onclick="window.__fb.closeModal()">取消</button>' +
+        (preview.hasAny ? '<button class="fb-btn fb-btn-primary fb-btn-block" onclick="window.__fb.confirmSettle(\'' + typeId + '\')">✓ 确认结息</button>' : '') +
+      '</div>';
+    document.getElementById('fb-modalOverlay').classList.remove('hidden');
+  };
+
+  FamilyBankView.prototype.refreshSettlePreview = function (typeId) {
+    var child = this.getChild();
+    var typeConfig = DEPOSIT_TYPES.find(function (t) { return t.id === typeId; });
+    var settleDate = document.getElementById('fb-settleDate').value;
+    if (!settleDate) return;
+
+    var depositsOfType = child.deposits.filter(function (d) { return d.rateType === typeId; });
+    var totalInterest = 0;
+    var rows = '';
+    var hasAny = false;
+
+    depositsOfType.forEach(function (d) {
+      var result = calcInterest(d.principal, d.rate, d.rateType, d.lastSettledDate || d.startDate, settleDate);
+      if (result.fullPeriods > 0) {
+        hasAny = true;
+        totalInterest += result.interest;
+        rows += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--background-modifier-border);font-size:13px;"><span>' + fmt(d.principal) + ' 元 · 起息 ' + d.startDate + '</span><span style="color:#E8730A;font-weight:600;">+' + fmt(result.interest) + ' 元 (' + result.fullPeriods + '期)</span></div>';
+      }
+    });
+
+    document.getElementById('fb-settlePreviewBody').innerHTML = hasAny ? rows : '<div style="color:var(--text-muted);font-size:13px;padding:6px 0;">暂无满周期的定存可结息</div>';
+    var actions = document.querySelector('#fb-modalContent .fb-modal-actions');
+    if (actions) {
+      actions.innerHTML =
+        '<button class="fb-btn fb-btn-hint fb-btn-block" onclick="window.__fb.closeModal()">取消</button>' +
+        (hasAny ? '<button class="fb-btn fb-btn-primary fb-btn-block" onclick="window.__fb.confirmSettle(\'' + typeId + '\')">✓ 确认结息 (' + fmt(totalInterest) + '元)</button>' : '');
+    }
+  };
+
+  FamilyBankView.prototype.confirmSettle = function (typeId) {
+    var child = this.getChild();
+    var typeConfig = DEPOSIT_TYPES.find(function (t) { return t.id === typeId; });
+    var settleDate = document.getElementById('fb-settleDate').value;
+    if (!settleDate) { this.showToast('请选择结息日期'); return; }
+
+    var depositsOfType = child.deposits.filter(function (d) { return d.rateType === typeId; });
+    var totalInterest = 0;
+    var hasAny = false;
+    var snapshots = [];
+    var self = this;
+
+    depositsOfType.forEach(function (d) {
+      var result = calcInterest(d.principal, d.rate, d.rateType, d.lastSettledDate || d.startDate, settleDate);
+      if (result.fullPeriods > 0) {
+        hasAny = true;
+        snapshots.push({
+          depositId: d.id, preLastSettledDate: d.lastSettledDate, preSettledTotal: d.settledTotal || 0,
+          interest: result.interest, periods: result.fullPeriods
+        });
+        d.settledTotal = (d.settledTotal || 0) + result.interest;
+        d.lastSettledDate = settleDate;
+        totalInterest += result.interest;
+      }
+    });
+
+    if (!hasAny) { this.showToast('没有可结算的利息'); return; }
+
+    var recordId = Date.now();
+    child.records.push({ id: recordId, date: settleDate, desc: typeConfig.name + '利息结算 (' + snapshots.length + '笔)', amount: totalInterest, tag: 'interest' });
+    child.settleHistory.push({ id: Date.now(), settleDate: settleDate, typeId: typeId, totalInterest: totalInterest, recordId: recordId, snapshots: snapshots });
+
+    this.saveData().then(function () {
+      self.closeModal();
+      self.renderDeposits();
+      self.renderOverview();
+      self.showToast('💰 ' + typeConfig.name + '利息 +' + fmt(totalInterest) + ' 元');
+    });
+  };
+
+  // ========================================
+  // 结息记录
+  // ========================================
+  FamilyBankView.prototype.showSettleHistory = function (typeId) {
+    var child = this.getChild();
+    var typeConfig = DEPOSIT_TYPES.find(function (t) { return t.id === typeId; });
+
+    var depositsOfType = child.deposits.filter(function (d) { return d.rateType === typeId; });
+    var legacyDetails = depositsOfType.map(function (d) {
+      var migrated = child.settleHistory.filter(function (h) { return h.typeId === typeId; }).flatMap(function (h) { return h.snapshots; }).filter(function (s) { return s.depositId === d.id; }).reduce(function (s, snap) { return s + snap.interest; }, 0);
+      var legacy = Math.max(0, (d.settledTotal || 0) - migrated);
+      return legacy > 0 ? { depositId: d.id, principal: d.principal, startDate: d.startDate, legacy: legacy } : null;
+    }).filter(function (x) { return x; });
+
+    var legacyAmount = legacyDetails.reduce(function (s, x) { return s + x.legacy; }, 0);
+    var history = child.settleHistory.filter(function (h) { return h.typeId === typeId; }).sort(function (a, b) { return b.settleDate.localeCompare(a.settleDate) || (b.id - a.id); });
+
+    if (history.length === 0 && legacyDetails.length === 0) { this.showToast('暂无结息记录'); return; }
+
+    var rows = history.map(function (h) {
+      var stillValid = child.records.some(function (r) { return r.id === h.recordId; });
+      var isLegacy = h.isLegacyMigration;
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--background-modifier-border);">' +
+        '<div><div style="font-size:14px;font-weight:600;">📅 ' + h.settleDate + (isLegacy ? ' <span style="font-size:10px;color:var(--text-muted);background:var(--background-secondary);padding:2px 6px;border-radius:4px;margin-left:6px;">旧版迁移</span>' : '') + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:2px;">' + h.snapshots.length + '笔' + (isLegacy ? '' : ' · ' + h.snapshots.reduce(function (s, x) { return s + x.periods; }, 0) + '期') + '</div></div>' +
+        '<div style="text-align:right;"><div style="color:#E8730A;font-size:14px;font-weight:600;">+' + fmt(h.totalInterest) + ' 元</div>' +
+        (isLegacy ? '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">只读·不可撤回</div>' :
+          stillValid ? '<button class="fb-btn fb-btn-danger fb-btn-sm" onclick="window.__fb.revokeSettle(' + h.id + ',\'' + typeId + '\')" style="margin-top:4px;">↩ 撤回</button>' :
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">已失效</div>') +
+        '</div></div>';
+    }).join('');
+
+    var legacySection = legacyDetails.length > 0
+      ? '<div style="background:#fff8e1;border:1px solid #f7c948;border-radius:10px;padding:12px;margin-bottom:10px;font-size:13px;">' +
+          '<div style="font-weight:600;color:#946c00;margin-bottom:4px;">⚠️ 检测到旧版结息数据未迁移</div>' +
+          '<div style="margin-bottom:6px;">累积 <strong>' + fmt(legacyAmount) + '</strong> 元利息未纳入结息记录。</div>' +
+          '<button class="fb-btn fb-btn-primary fb-btn-sm" onclick="window.__fb.migrateLegacySettle(\'' + typeId + '\')">🔄 一键迁移到结息历史</button>' +
+        '</div>'
+      : '';
+
+    var modal = document.getElementById('fb-modalContent');
+    modal.innerHTML =
+      '<div class="fb-modal-title">📜 ' + typeConfig.name + ' · 结息历史</div>' +
+      '<div style="max-height:50vh;overflow-y:auto;">' + legacySection + (history.length > 0 ? rows : '') + '</div>' +
+      '<div class="fb-modal-actions"><button class="fb-btn fb-btn-hint fb-btn-block" onclick="window.__fb.closeModal()">关闭</button></div>';
+    document.getElementById('fb-modalOverlay').classList.remove('hidden');
+  };
+
+  FamilyBankView.prototype.revokeSettle = function (historyId, typeId) {
+    var child = this.getChild();
+    var idx = child.settleHistory.findIndex(function (h) { return h.id === historyId && h.typeId === typeId; });
+    if (idx === -1) { this.showToast('记录已不存在'); return; }
+    var history = child.settleHistory[idx];
+    if (history.isLegacyMigration) { this.showToast('此为迁移记录，不支持撤回'); this.closeModal(); return; }
+
+    var modal = document.getElementById('fb-modalContent');
+    var self = this;
+    modal.innerHTML =
+      '<div class="fb-modal-title">⚠️ 撤回结息</div>' +
+      '<div style="margin-bottom:12px;background:var(--background-secondary);border-radius:10px;padding:12px;">' +
+        '<div>📅 结息日期：' + history.settleDate + '</div>' +
+        '<div style="color:#E8730A;font-weight:600;">💰 利息金额：+' + fmt(history.totalInterest) + ' 元</div>' +
+        '<div>📝 ' + history.snapshots.length + '笔</div>' +
+      '</div>' +
+      '<div style="font-size:12px;color:var(--text-error);margin-bottom:8px;">⚠️ 撤回后，利息流水将被删除，定存状态将恢复。</div>' +
+      '<div class="fb-modal-actions">' +
+        '<button class="fb-btn fb-btn-hint fb-btn-block" onclick="window.__fb.closeModal()">取消</button>' +
+        '<button class="fb-btn fb-btn-danger fb-btn-block" onclick="window.__fb.execRevoke(' + historyId + ',\'' + typeId + '\')">确认撤回</button>' +
+      '</div>';
+  };
+
+  FamilyBankView.prototype.execRevoke = function (historyId, typeId) {
+    var child = this.getChild();
+    var idx = child.settleHistory.findIndex(function (h) { return h.id === historyId && h.typeId === typeId; });
+    if (idx === -1) { this.showToast('记录已不存在'); this.closeModal(); return; }
+    var history = child.settleHistory[idx];
+    if (history.isLegacyMigration) { this.showToast('此为迁移记录'); this.closeModal(); return; }
+
+    var recIdx = child.records.findIndex(function (r) { return r.id === history.recordId; });
+    if (recIdx !== -1) child.records.splice(recIdx, 1);
+
+    history.snapshots.forEach(function (snap) {
+      var dep = child.deposits.find(function (d) { return d.id === snap.depositId; });
+      if (dep) { dep.lastSettledDate = snap.preLastSettledDate; dep.settledTotal = snap.preSettledTotal; }
+    });
+
+    child.settleHistory.splice(idx, 1);
+    var self = this;
+    this.saveData().then(function () {
+      self.closeModal();
+      self.renderDeposits();
+      self.renderOverview();
+      self.showToast('↩ 已撤回该笔结息');
+    });
+  };
+
+  FamilyBankView.prototype.migrateLegacySettle = function (typeId) {
+    var child = this.getChild();
+    var depositsOfType = child.deposits.filter(function (d) { return d.rateType === typeId; });
+    var legacyDetails = depositsOfType.map(function (d) {
+      var migrated = child.settleHistory.filter(function (h) { return h.typeId === typeId; }).flatMap(function (h) { return h.snapshots; }).filter(function (s) { return s.depositId === d.id; }).reduce(function (s, snap) { return s + snap.interest; }, 0);
+      var legacy = Math.max(0, (d.settledTotal || 0) - migrated);
+      return legacy > 0 ? { depositId: d.id, principal: d.principal, startDate: d.startDate, legacy: legacy, lastSettledDate: d.lastSettledDate } : null;
+    }).filter(function (x) { return x; });
+
+    if (legacyDetails.length === 0) { this.showToast('没有需要迁移的数据'); return; }
+
+    var total = legacyDetails.reduce(function (s, x) { return s + x.legacy; }, 0);
+    var modal = document.getElementById('fb-modalContent');
+    var self = this;
+    modal.innerHTML =
+      '<div class="fb-modal-title">🔄 迁移旧版结息数据</div>' +
+      '<div style="margin-bottom:12px;"><div style="margin-bottom:8px;">将迁移 <strong>' + fmt(total) + '</strong> 元到结息历史（不产生新流水）：</div></div>' +
+      '<div class="fb-modal-actions">' +
+        '<button class="fb-btn fb-btn-hint fb-btn-block" onclick="window.__fb.showSettleHistory(\'' + typeId + '\')">返回</button>' +
+        '<button class="fb-btn fb-btn-primary fb-btn-block" onclick="window.__fb.execMigrateLegacy(\'' + typeId + '\')">确认迁移</button>' +
+      '</div>';
+  };
+
+  FamilyBankView.prototype.execMigrateLegacy = function (typeId) {
+    var child = this.getChild();
+    var depositsOfType = child.deposits.filter(function (d) { return d.rateType === typeId; });
+    var legacyDetails = depositsOfType.map(function (d) {
+      var migrated = child.settleHistory.filter(function (h) { return h.typeId === typeId; }).flatMap(function (h) { return h.snapshots; }).filter(function (s) { return s.depositId === d.id; }).reduce(function (s, snap) { return s + snap.interest; }, 0);
+      var legacy = Math.max(0, (d.settledTotal || 0) - migrated);
+      return legacy > 0 ? { depositId: d.id, legacy: legacy, lastSettledDate: d.lastSettledDate } : null;
+    }).filter(function (x) { return x; });
+
+    if (legacyDetails.length === 0) { this.showToast('没有需要迁移的数据'); return; }
+
+    var total = legacyDetails.reduce(function (s, x) { return s + x.legacy; }, 0);
+    var today = new Date().toISOString().slice(0, 10);
+    var fakeRecordId = -Math.abs(Date.now());
+
+    child.settleHistory.push({
+      id: Date.now(), settleDate: today, typeId: typeId, totalInterest: total, recordId: fakeRecordId, isLegacyMigration: true,
+      snapshots: legacyDetails.map(function (d) { return { depositId: d.depositId, preLastSettledDate: d.lastSettledDate, preSettledTotal: 0, interest: d.legacy, periods: 0 }; })
+    });
+
+    var self = this;
+    this.saveData().then(function () {
+      self.closeModal();
+      self.renderDeposits();
+      self.showToast('🔄 已迁移 ' + fmt(total) + ' 元到结息历史');
+    });
+  };
+
+  // ========================================
+  // 理财操作：明细（弹窗）
+  // ========================================
+  FamilyBankView.prototype.showDepositDetail = function (typeId) {
+    var child = this.getChild();
+    var typeConfig = DEPOSIT_TYPES.find(function (t) { return t.id === typeId; });
+    var items = child.deposits.map(function (d, idx) { return Object.assign({}, d, { _idx: idx }); }).filter(function (d) { return d.rateType === typeId; }).sort(function (a, b) { return a.startDate.localeCompare(b.startDate); });
+
+    if (items.length === 0) { this.showToast('该类型无明细'); return; }
+
+    var today = new Date().toISOString().slice(0, 10);
+    var totalPrincipal = items.reduce(function (s, x) { return s + x.principal; }, 0);
+    var totalSettled = items.reduce(function (s, x) { return s + (x.settledTotal || 0); }, 0);
+
+    var rows = items.map(function (d, i) {
+      var preview = calcInterest(d.principal, d.rate, d.rateType, d.lastSettledDate || d.startDate, today);
+      var daysPassed = Math.floor(preview.days);
+      var phase = preview.fullPeriods > 0
+        ? '已结 ' + preview.fullPeriods + '期 · 还差 ' + preview.partialDays.toFixed(1) + '天到下期'
+        : '还差 ' + (preview.periodDays - preview.partialDays).toFixed(1) + '天到首期';
+      return '<div style="border-top:' + (i === 0 ? 'none' : '1px solid var(--background-modifier-border)') + ';padding:12px 0;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+          '<div><div style="font-size:16px;font-weight:600;">' + fmt(d.principal) + ' 元</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-top:2px;">📅 ' + d.startDate + ' ' + (d.source || '') + '</div></div>' +
+          '<div style="text-align:right;"><div style="color:#E8730A;font-size:13px;font-weight:600;">已结 ' + fmt(d.settledTotal || 0) + ' 元</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">' + daysPassed + '天前起算</div></div>' +
+        '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;">⏳ ' + phase + '</div>' +
+        '<div style="margin-top:6px;text-align:right;"><button class="fb-btn fb-btn-danger fb-btn-sm" onclick="window.__fb.closeModal();window.__fb.withdrawDeposit(' + d._idx + ')">🏧 取回这笔</button></div>' +
+      '</div>';
+    }).join('');
+
+    var modal = document.getElementById('fb-modalContent');
+    modal.innerHTML =
+      '<div class="fb-modal-title">📋 ' + typeConfig.name + ' · 明细</div>' +
+      '<div style="background:var(--background-secondary);border-radius:10px;padding:10px;margin-bottom:10px;display:flex;justify-content:space-between;font-size:13px;">' +
+        '<span>累计本金 <strong>' + fmt(totalPrincipal) + ' 元</strong></span>' +
+        '<span>累计已结息 <strong style="color:#E8730A;">' + fmt(totalSettled) + ' 元</strong></span>' +
+        '<span>共 <strong>' + items.length + '</strong> 笔</span>' +
+      '</div>' +
+      '<div style="max-height:45vh;overflow-y:auto;">' + rows + '</div>' +
+      '<div class="fb-modal-actions"><button class="fb-btn fb-btn-hint fb-btn-block" onclick="window.__fb.closeModal()">关闭</button></div>';
+    document.getElementById('fb-modalOverlay').classList.remove('hidden');
+  };
+
+  // ========================================
+  // 取回
+  // ========================================
+  FamilyBankView.prototype.withdrawDeposit = function (index) {
+    var child = this.getChild();
+    var d = child.deposits[index];
+    if (!d) return;
+    var today = new Date().toISOString().slice(0, 10);
+    var result = calcInterest(d.principal, d.rate, d.rateType, d.lastSettledDate || d.startDate, today);
+    var settledNow = result.fullPeriods > 0 ? result.interest : 0;
+    var previewSettledTotal = (d.settledTotal || 0) + settledNow;
+    var partialDays = result.partialDays;
+    var hasPenalty = partialDays > 0;
+    var penaltyAmount = hasPenalty ? previewSettledTotal * 1.5 : 0;
+    var withdrawAmount = d.principal - penaltyAmount;
+
+    var modal = document.getElementById('fb-modalContent');
+    modal.innerHTML =
+      '<div class="fb-modal-title">🏧 取回定期</div>' +
+      '<div style="margin-bottom:12px;">' +
+        '<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span>本金</span><span style="font-weight:600">' + fmt(d.principal) + ' 元</span></div>' +
+        '<div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span>已结算利息</span><span style="color:#E8730A;font-weight:600">+' + fmt(previewSettledTotal) + ' 元</span></div>' +
+        (settledNow > 0 ? '<div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:13px;color:var(--text-muted);"><span>本期新结算利息</span><span style="color:#E8730A;">+' + fmt(settledNow) + ' 元</span></div>' : '') +
+        (hasPenalty ? '<div style="display:flex;justify-content:space-between;margin-bottom:4px;color:var(--text-error)"><span>⚠️ 不满周期，罚金 (已计利息×1.5)</span><span style="font-weight:600">-' + fmt(penaltyAmount) + ' 元</span></div>' : '') +
+        '<hr style="border:none;border-top:1px solid var(--background-modifier-border);margin:8px 0;">' +
+        '<div style="display:flex;justify-content:space-between;"><span style="font-weight:600">实际到账</span><span style="font-weight:800;font-size:18px;color:' + (hasPenalty ? 'var(--text-error)' : '#27ae60') + '">' + fmt(withdrawAmount) + ' 元</span></div>' +
+        (hasPenalty ? '<div style="font-size:12px;color:var(--text-muted);margin-top:2px;">罚金 = 已计利息 × 1.5</div>' : '<div style="font-size:12px;color:#27ae60;margin-top:2px;">✓ 满期取回，免罚金</div>') +
+      '</div>' +
+      '<div class="fb-modal-actions">' +
+        '<button class="fb-btn fb-btn-hint fb-btn-block" onclick="window.__fb.closeModal()">取消</button>' +
+        '<button class="fb-btn fb-btn-primary fb-btn-block" onclick="window.__fb.confirmWithdraw(' + index + ')">确认取回</button>' +
+      '</div>';
+    document.getElementById('fb-modalOverlay').classList.remove('hidden');
+  };
+
+  FamilyBankView.prototype.confirmWithdraw = function (index) {
+    var child = this.getChild();
+    var d = child.deposits[index];
+    if (!d) { this.showToast('该笔定存已不存在'); return; }
+    var today = new Date().toISOString().slice(0, 10);
+    var result = calcInterest(d.principal, d.rate, d.rateType, d.lastSettledDate || d.startDate, today);
+
+    if (result.fullPeriods > 0) {
+      d.settledTotal = (d.settledTotal || 0) + result.interest;
+      child.records.push({ id: Date.now(), date: today, desc: '定期利息 (取回结算)', amount: result.interest, tag: 'interest' });
+    }
+
+    var hasPenalty = result.partialDays > 0;
+    var penaltyAmount = hasPenalty ? (d.settledTotal || 0) * 1.5 : 0;
+    var withdrawAmount = d.principal - penaltyAmount;
+
+    if (withdrawAmount > 0) {
+      child.records.push({
+        id: Date.now(), date: today,
+        desc: hasPenalty ? '提前支取定期 (罚金' + fmt(penaltyAmount) + ')' : '到期取回定期',
+        amount: withdrawAmount,
+        tag: hasPenalty ? 'penalty' : 'bonus'
+      });
+    }
+
+    child.deposits.splice(index, 1);
+    this.recordAssetSnapshot(child, today);
+    var self = this;
+    this.saveData().then(function () {
+      self.closeModal();
+      self.renderDeposits();
+      self.renderOverview();
+      self.showToast('🏧 已取回，到账 ' + fmt(withdrawAmount) + ' 元');
+    });
+  };
+
+  // ========================================
+  // 管理页
+  // ========================================
+  FamilyBankView.prototype.enterManageMode = function () {
+    this.manageModeActive = true;
+    this.manageChildId = this.data.currentChild;
+    document.getElementById('fb-manageGate').style.display = 'none';
+    document.getElementById('fb-manageContent').style.display = 'block';
+
+    var currentChild = this.data.children[this.manageChildId];
+    document.getElementById('fb-goalName').value = currentChild.goal && currentChild.goal.name || '';
+    document.getElementById('fb-goalTarget').value = currentChild.goal && currentChild.goal.target || '';
+    this.updateDeleteGoalBtn(currentChild);
+
+    this.selectDeductionType('month');
+    this.renderDeductionHistory();
+    this.renderManageDeposits();
+  };
+
+  FamilyBankView.prototype.renderManageDeposits = function () {
+    var child = this.getChild();
+    var el = document.getElementById('fb-manageDepositsList');
+    if (!el) return;
+
+    if (child.deposits.length === 0) {
+      el.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:6px 0;">暂无定期存款</div>';
+      return;
+    }
+
+    el.innerHTML = child.deposits.map(function (d, i) {
+      var settled = d.settledTotal || 0;
+      var typeConfig = DEPOSIT_TYPES.find(function (t) { return t.id === d.rateType; }) || { name: d.rateType, rateLabel: d.rateType };
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--background-modifier-border);font-size:13px;">' +
+        '<span>📅 ' + d.startDate + ' · <strong>' + fmt(d.principal) + ' 元</strong> · ' + typeConfig.rateLabel + '</span>' +
+        '<span>已结 ' + fmt(settled) + ' 元 <button class="fb-btn fb-btn-danger fb-btn-sm" onclick="window.__fb.withdrawDeposit(' + i + ')" style="margin-left:6px;">取回</button></span>' +
+      '</div>';
+    }).join('');
+  };
+
+  // ========================================
+  // 定存扣减
+  // ========================================
+  FamilyBankView.prototype.selectDeductionType = function (type) {
+    this.deductionType = type;
+    document.getElementById('fb-ddTypeMonth').className = type === 'month' ? 'fb-btn fb-btn-primary fb-btn-block' : 'fb-btn fb-btn-outline fb-btn-block';
+    document.getElementById('fb-ddTypeYear').className = type === 'year' ? 'fb-btn fb-btn-primary fb-btn-block' : 'fb-btn fb-btn-outline fb-btn-block';
+    this.renderSpecificDepositList();
+  };
+
+  FamilyBankView.prototype.selectDeductionMode = function (mode) {
+    this.deductionMode = mode;
+    document.getElementById('fb-ddModeProp').className = mode === 'proportional' ? 'fb-btn fb-btn-primary fb-btn-block' : 'fb-btn fb-btn-outline fb-btn-block';
+    document.getElementById('fb-ddModeSpecific').className = mode === 'specific' ? 'fb-btn fb-btn-primary fb-btn-block' : 'fb-btn fb-btn-outline fb-btn-block';
+    document.getElementById('fb-ddSpecificSelect').style.display = mode === 'specific' ? 'block' : 'none';
+    if (mode === 'specific') this.renderSpecificDepositList();
+  };
+
+  FamilyBankView.prototype.renderSpecificDepositList = function () {
+    var child = this.getChild();
+    var deposits = child.deposits.filter(function (d) { return d.rateType === this.deductionType; }.bind(this));
+    var el = document.getElementById('fb-ddSpecificList');
+    if (!el) return;
+    if (deposits.length === 0) { el.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:6px 0;">该类型无定存</div>'; return; }
+
+    var self = this;
+    el.innerHTML = deposits.map(function (d) {
+      return '<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:4px;border-radius:8px;border:1.5px solid ' + (self.selectedDepositId === d.id ? '#E8730A' : 'var(--background-modifier-border)') + ';cursor:pointer;" onclick="window.__fb.selectDeductionDeposit(' + d.id + ')">' +
+        '<input type="radio" name="fb-ddDeposit" ' + (self.selectedDepositId === d.id ? 'checked' : '') + ' style="accent-color:#E8730A;">' +
+        '<span>' + fmt(d.principal) + ' 元 · ' + d.startDate + '</span></label>';
+    }).join('');
+  };
+
+  FamilyBankView.prototype.selectDeductionDeposit = function (id) {
+    this.selectedDepositId = id;
+    this.renderSpecificDepositList();
+  };
+
+  FamilyBankView.prototype.confirmDeduction = function () {
+    var child = this.getChild();
+    var reason = document.getElementById('fb-ddReason').value.trim();
+    var amount = parseFloat(document.getElementById('fb-ddAmount').value);
+    if (!reason) { this.showToast('请输入扣减原因'); return; }
+    if (!amount || amount <= 0) { this.showToast('请输入有效金额'); return; }
+
+    var depositsOfType = child.deposits.filter(function (d) { return d.rateType === this.deductionType; }.bind(this));
+    var totalPrincipal = depositsOfType.reduce(function (s, d) { return s + d.principal; }, 0);
+    if (totalPrincipal <= 0) { this.showToast('该类型无定期存款可扣减'); return; }
+    var typeConfig = DEPOSIT_TYPES.find(function (t) { return t.id === this.deductionType; }.bind(this));
+    var modeLabel = this.deductionMode === 'proportional' ? '按比例分摊' : '指定某笔';
+
+    if (this.deductionMode === 'specific') {
+      if (!this.selectedDepositId) { this.showToast('请先选择要扣减的定存'); return; }
+      var targetDeposit = depositsOfType.find(function (d) { return d.id === this.selectedDepositId; }.bind(this));
+      if (!targetDeposit) { this.showToast('选中的定存不存在'); return; }
+      if (amount > targetDeposit.principal) { this.showToast('该笔定存只有 ' + fmt(targetDeposit.principal) + ' 元'); return; }
+    } else {
+      if (amount > totalPrincipal) { this.showToast('该类型定存总额 ' + fmt(totalPrincipal) + ' 元，不足扣减'); return; }
+    }
+
+    var modal = document.getElementById('fb-modalContent');
+    modal.innerHTML =
+      '<div class="fb-modal-title">⚠️ 确认扣减</div>' +
+      '<div style="background:#fef0ef;border-radius:10px;padding:14px;margin-bottom:12px;">' +
+        '<div style="margin-bottom:6px;">⚔️ 从 <strong>' + typeConfig.name + '</strong> 中扣减（' + modeLabel + '）</div>' +
+        '<div style="display:flex;justify-content:space-between;"><span>原因</span><span>' + reason + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;margin-top:4px;"><span>扣减金额</span><span style="color:var(--text-error);font-weight:600;">-' + fmt(amount) + ' 元</span></div>' +
+      '</div>' +
+      '<div class="fb-modal-actions">' +
+        '<button class="fb-btn fb-btn-hint fb-btn-block" onclick="window.__fb.closeModal()">取消</button>' +
+        '<button class="fb-btn fb-btn-danger fb-btn-block" onclick="window.__fb.execDeduction(\'' + reason + '\',' + amount + ')">确认扣减</button>' +
+      '</div>';
+    document.getElementById('fb-modalOverlay').classList.remove('hidden');
+  };
+
+  FamilyBankView.prototype.execDeduction = function (reason, amount) {
+    var child = this.getChild();
+    var depositsOfType = child.deposits.filter(function (d) { return d.rateType === this.deductionType; }.bind(this));
+    if (depositsOfType.length === 0) { this.showToast('无定期可扣减'); this.closeModal(); return; }
+    var today = new Date().toISOString().slice(0, 10);
+    var typeConfig = DEPOSIT_TYPES.find(function (t) { return t.id === this.deductionType; }.bind(this));
+    var self = this;
+
+    var affectedDeposits = this.deductionMode === 'proportional'
+      ? depositsOfType
+      : [depositsOfType.find(function (d) { return d.id === self.selectedDepositId; })].filter(Boolean);
+
+    var settleTotal = 0;
+    affectedDeposits.forEach(function (d) {
+      var result = calcInterest(d.principal, d.rate, d.rateType, d.lastSettledDate || d.startDate, today);
+      if (result.fullPeriods > 0) {
+        d.settledTotal = (d.settledTotal || 0) + result.interest;
+        d.lastSettledDate = today;
+        settleTotal += result.interest;
+      }
+    });
+
+    if (settleTotal > 0) {
+      child.records.push({ id: Date.now(), date: today, desc: typeConfig.name + '利息结算 (扣减前)', amount: settleTotal, tag: 'interest' });
+    }
+
+    var details = [];
+    if (self.deductionMode === 'proportional') {
+      var totalPrincipal = depositsOfType.reduce(function (s, d) { return s + d.principal; }, 0);
+      depositsOfType.forEach(function (d) {
+        var ratio = d.principal / totalPrincipal;
+        var deductAmount = Math.round(amount * ratio * 100) / 100;
+        if (deductAmount > 0) {
+          d.principal = Math.max(0, Math.round((d.principal - deductAmount) * 100) / 100);
+          details.push({ depositId: d.id, deducted: deductAmount });
+        }
+      });
+      var totalDeducted = details.reduce(function (s, x) { return s + x.deducted; }, 0);
+      if (Math.abs(totalDeducted - amount) > 0.01 && depositsOfType.length > 0) {
+        var diff = Math.round((amount - totalDeducted) * 100) / 100;
+        depositsOfType[depositsOfType.length - 1].principal = Math.max(0, Math.round((depositsOfType[depositsOfType.length - 1].principal - diff) * 100) / 100);
+      }
+    } else {
+      var targetDeposit = depositsOfType.find(function (d) { return d.id === self.selectedDepositId; });
+      if (!targetDeposit) { self.showToast('选中的定存已不存在'); self.closeModal(); return; }
+      targetDeposit.principal = Math.max(0, Math.round((targetDeposit.principal - amount) * 100) / 100);
+      details.push({ depositId: targetDeposit.id, deducted: amount });
+    }
+
+    child.deductions.push({ id: Date.now(), date: today, typeId: self.deductionType, typeName: typeConfig.name, reason: reason, amount: amount, mode: self.deductionMode, details: details });
+    self.recordAssetSnapshot(child, today);
+
+    self.saveData().then(function () {
+      self.closeModal();
+      if (document.getElementById('fb-pageDeposits').classList.contains('active')) self.renderDeposits();
+      self.renderOverview();
+      document.getElementById('fb-ddReason').value = '';
+      document.getElementById('fb-ddAmount').value = '';
+      self.renderDeductionHistory();
+      var settleMsg = settleTotal > 0 ? '（含扣减前利息 ' + fmt(settleTotal) + ' 元）' : '';
+      self.showToast('⚠️ 已从' + typeConfig.name + '扣减 ' + fmt(amount) + ' 元' + settleMsg);
+    });
+  };
+
+  FamilyBankView.prototype.renderDeductionHistory = function () {
+    var child = this.data.children[this.manageChildId];
+    var el = document.getElementById('fb-ddHistory');
+    if (!el) return;
+    var deductions = child.deductions ? [].concat(child.deductions).reverse() : [];
+    el.innerHTML = deductions.length === 0
+      ? '<div style="font-size:13px;color:var(--text-muted);padding:4px 0;">暂无扣减记录</div>'
+      : deductions.map(function (d) {
+          return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--background-modifier-border);font-size:13px;">' +
+            '<div><span style="font-weight:500;">' + d.reason + '</span><div style="font-size:11px;color:var(--text-muted);">' + d.date + ' · ' + d.typeName + ' · ' + (d.mode === 'specific' ? '指定' : '分摊') + '</div></div>' +
+            '<div style="color:var(--text-error);font-weight:600;">-' + fmt(d.amount) + ' 元</div></div>';
+        }).join('');
+  };
+
+  // ========================================
+  // 目标
+  // ========================================
+  FamilyBankView.prototype.setGoal = function () {
+    var child = this.data.children[this.manageChildId];
+    var name = document.getElementById('fb-goalName').value.trim();
+    var target = parseFloat(document.getElementById('fb-goalTarget').value);
+    if (!name) { this.showToast('请输入目标名称'); return; }
+    if (!target || target <= 0) { this.showToast('请输入有效的目标金额'); return; }
+
+    child.goal = { name: name, target: target };
+    var self = this;
+    this.saveData().then(function () {
+      self.renderOverview();
+      self.updateDeleteGoalBtn(child);
+      self.showToast('🎯 目标已设定：' + name + ' ' + fmt(target) + ' 元');
+    });
+  };
+
+  FamilyBankView.prototype.deleteGoal = function () {
+    var child = this.data.children[this.data.currentChild];
+    if (!child.goal || !child.goal.name) { this.showToast('暂无目标可删除'); return; }
+    var goalName = child.goal.name;
+    child.goal = { name: '', target: 0 };
+    document.getElementById('fb-goalName').value = '';
+    document.getElementById('fb-goalTarget').value = '';
+    this.updateDeleteGoalBtn(child);
+    var self = this;
+    this.saveData().then(function () {
+      self.renderOverview();
+      self.showToast('🗑️ 已删除目标「' + goalName + '」');
+    });
+  };
+
+  FamilyBankView.prototype.updateDeleteGoalBtn = function (child) {
+    var btn = document.getElementById('fb-deleteGoalBtn');
+    if (!btn) return;
+    var hasGoal = child.goal && child.goal.name && child.goal.target > 0;
+    btn.style.display = hasGoal ? 'block' : 'none';
+  };
+
+  // ========================================
+  // 数据备份
+  // ========================================
+  FamilyBankView.prototype.exportData = function () {
+    try {
+      var blob = new Blob([JSON.stringify(this.data, null, 2)], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = '家庭银行数据.json';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      this.showToast('📥 已导出：家庭银行数据.json');
+    } catch (e) { this.showToast('导出失败'); }
+  };
+
+  FamilyBankView.prototype.importData = function (event) {
+    var file = event.target.files[0];
+    if (!file) return;
+    var self = this;
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      try {
+        var parsed = JSON.parse(e.target.result);
+        self.data = mergeDefaults(parsed);
+        self.saveData().then(function () {
+          self.renderChildSwitch();
+          self.renderOverview();
+          if (document.getElementById('fb-pageDeposits').classList.contains('active')) self.renderDeposits();
+          if (self.manageModeActive) {
+            self.renderManageDeposits();
+            self.renderDeductionHistory();
+          }
+          self.showToast('📤 数据已导入');
+        });
+      } catch (err) { self.showToast('导入失败：文件格式错误'); }
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
+
+  FamilyBankView.prototype.resetAllData = function () {
+    var modal = document.getElementById('fb-modalContent');
+    modal.innerHTML =
+      '<div class="fb-modal-title">⚠️ 确认清零</div>' +
+      '<div style="margin-bottom:12px;font-size:14px;">确定要清除 <strong>所有数据</strong> 吗？此操作不可逆！</div>' +
+      '<div class="fb-modal-actions">' +
+        '<button class="fb-btn fb-btn-hint fb-btn-block" onclick="window.__fb.closeModal()">取消</button>' +
+        '<button class="fb-btn fb-btn-danger fb-btn-block" onclick="window.__fb.execResetAll()">确认清零</button>' +
+      '</div>';
+    document.getElementById('fb-modalOverlay').classList.remove('hidden');
+  };
+
+  FamilyBankView.prototype.execResetAll = function () {
+    this.data = getDefaultData();
+    this.manageModeActive = false;
+    var self = this;
+    this.saveData().then(function () {
+      self.closeModal();
+      document.getElementById('fb-manageGate').style.display = 'block';
+      document.getElementById('fb-manageContent').style.display = 'none';
+      self.renderChildSwitch();
+      self.renderOverview();
+      self.renderDeposits();
+      self.showToast('🗑️ 所有数据已清零');
+    });
+  };
+
+  return FamilyBankView;
+})();
+
+// ========================================
+// Plugin 入口
+// ========================================
+var FamilyBankPlugin = (function () {
+  function FamilyBankPlugin() {
+    obsidian.Plugin.apply(this, arguments);
+  }
+  FamilyBankPlugin.prototype = Object.create(obsidian.Plugin.prototype);
+  FamilyBankPlugin.prototype.constructor = FamilyBankPlugin;
+
+  FamilyBankPlugin.prototype.onload = function () {
+    var self = this;
+    this.registerView('family-bank', function (leaf) {
+      return new FamilyBankView(leaf, self);
+    });
+
+    this.addCommand({
+      id: 'open-family-bank',
+      name: '打开家庭银行',
+      callback: function () {
+        self.activateView();
+      }
+    });
+
+    this.addRibbonIcon('wallet', '家庭银行', function () {
+      self.activateView();
+    });
+  };
+
+  FamilyBankPlugin.prototype.activateView = function () {
+    var leaves = this.app.workspace.getLeavesOfType('family-bank');
+    if (leaves.length > 0) {
+      this.app.workspace.revealLeaf(leaves[0]);
+    } else {
+      this.app.workspace.getRightLeaf(false).setViewState({
+        type: 'family-bank',
+        active: true
+      });
+    }
+  };
+
+  FamilyBankPlugin.prototype.onunload = function () {
+    // cleanup
+  };
+
+  return FamilyBankPlugin;
+})();
+
+module.exports = FamilyBankPlugin;

@@ -1,0 +1,10 @@
+{
+  "id": "family-bank",
+  "name": "家庭银行",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "家庭代币/定期存款管理系统，两个孩子独立账户，支持月/年定存、结息、扣减、走势图",
+  "author": "KuMoo",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
