@@ -66,6 +66,8 @@ class FamilyBankView extends obsidian.ItemView {
     this.data = { version: 2, currentChild: null, children: {} };
     this.selectedDepositType = 'month';
     this.selectedDepositSource = '📌其他';
+    this.settleMode = 'cash';
+    this.settleDepositType = 'month';
     this.manageChildId = null;
     this.manageModeActive = false;
     this.deductionType = 'month';
@@ -666,9 +668,19 @@ class FamilyBankView extends obsidian.ItemView {
 
     const today = new Date().toISOString().slice(0, 10);
     const preview = this._calcSettlePreview(depositsOfType, today);
+    this.settleMode = 'cash';
+    this.settleDepositType = 'month';
     this.openModal(`
       <div class="fb-modal-title">💰 ${typeConfig.name} · 结算利息</div>
       <div class="fb-form-group"><label class="fb-form-label">结息日期</label><input class="fb-form-input" type="date" id="fb-settleDate" value="${today}" onchange="window.__fb.refreshSettlePreview('${typeId}')"></div>
+      <div class="fb-form-group"><label class="fb-form-label">结算方式</label><div style="display:flex;gap:10px;">
+        <button class="fb-btn fb-btn-primary fb-btn-block" id="fb-settleModeCash" onclick="window.__fb.selectSettleMode('cash')">💵 现金结算</button>
+        <button class="fb-btn fb-btn-outline fb-btn-block" id="fb-settleModeDeposit" onclick="window.__fb.selectSettleMode('deposit')">🏦 计入存款</button>
+      </div></div>
+      <div class="fb-form-group" id="fb-settleDepositTypeGroup" style="display:none;"><label class="fb-form-label">转存类型</label><div style="display:flex;gap:10px;">
+        <button class="fb-btn fb-btn-primary fb-btn-block" id="fb-settleDepositTypeMonth" onclick="window.__fb.selectSettleDepositType('month')">🪙 月定存</button>
+        <button class="fb-btn fb-btn-outline fb-btn-block" id="fb-settleDepositTypeYear" onclick="window.__fb.selectSettleDepositType('year')">💎 年定存</button>
+      </div></div>
       <div style="background:var(--background-secondary);border-radius:10px;padding:12px;margin-bottom:8px;">
         <div style="font-size:13px;color:var(--text-muted);margin-bottom:6px;">📋 本次结息明细</div>
         <div id="fb-settlePreviewBody">${preview.hasAny ? preview.html : '<div style="color:var(--text-muted);font-size:13px;padding:6px 0;">暂无满周期的定存可结息</div>'}</div>
@@ -679,6 +691,19 @@ class FamilyBankView extends obsidian.ItemView {
         ${preview.hasAny ? `<button class="fb-btn fb-btn-primary fb-btn-block" onclick="window.__fb.confirmSettle('${typeId}')">✓ 确认结息</button>` : ''}
       </div>
     `);
+  }
+
+  selectSettleMode(mode) {
+    this.settleMode = mode;
+    document.getElementById('fb-settleModeCash').className = mode === 'cash' ? 'fb-btn fb-btn-primary fb-btn-block' : 'fb-btn fb-btn-outline fb-btn-block';
+    document.getElementById('fb-settleModeDeposit').className = mode === 'deposit' ? 'fb-btn fb-btn-primary fb-btn-block' : 'fb-btn fb-btn-outline fb-btn-block';
+    document.getElementById('fb-settleDepositTypeGroup').style.display = mode === 'deposit' ? 'block' : 'none';
+  }
+
+  selectSettleDepositType(type) {
+    this.settleDepositType = type;
+    document.getElementById('fb-settleDepositTypeMonth').className = type === 'month' ? 'fb-btn fb-btn-primary fb-btn-block' : 'fb-btn fb-btn-outline fb-btn-block';
+    document.getElementById('fb-settleDepositTypeYear').className = type === 'year' ? 'fb-btn fb-btn-primary fb-btn-block' : 'fb-btn fb-btn-outline fb-btn-block';
   }
 
   _calcSettlePreview(depositsOfType, settleDate) {
@@ -735,11 +760,21 @@ class FamilyBankView extends obsidian.ItemView {
     child.records.push({ id: recordId, date: settleDate, desc: typeConfig.name + '利息结算 (' + snapshots.length + '笔)', amount: totalInterest, tag: 'interest' });
     child.settleHistory.push({ id: Date.now(), settleDate, typeId, totalInterest, recordId, snapshots });
 
+    // 结算方式：计入存款 → 转存为一笔新定期
+    if (this.settleMode === 'deposit' && totalInterest > 0) {
+      const targetConfig = DEPOSIT_TYPES.find(t => t.id === this.settleDepositType);
+      child.deposits.push({
+        id: Date.now(), principal: totalInterest, rate: targetConfig.rate, rateType: targetConfig.id,
+        startDate: settleDate, lastSettledDate: settleDate, settledTotal: 0, source: '💰利息转存'
+      });
+    }
+
     await this.saveData();
     this.closeModal();
     this.renderDeposits();
     this.renderOverview();
-    this.showToast('💰 ' + typeConfig.name + '利息 +' + fmt(totalInterest) + ' 元');
+    const depositMsg = this.settleMode === 'deposit' ? '，已转存为' + (DEPOSIT_TYPES.find(t => t.id === this.settleDepositType)).name : '，现金结算';
+    this.showToast('💰 ' + typeConfig.name + '利息 +' + fmt(totalInterest) + ' 元' + depositMsg);
   }
 
   // ========================================
