@@ -9,11 +9,122 @@ const DEPOSIT_TYPES = [
 ];
 
 const CHANGELOG = [
+  { version: '1.3.0', date: '2026-08-07', changes: ['新增：界面语言切换（设置页可选 中文 / English）', '英文模式：导航、卡片、弹窗、提示自动切换，用户录入数据保持原文', '中文为默认语言，不切换不受影响'] },
   { version: '1.2.0', date: '2026-08-07', changes: ['新增：点击版本号查看更新日志', '优化：description 支持中文搜索（搜「家庭银行」可找到）'] },
   { version: '1.1.1', date: '2026-08-07', changes: ['修复：资产走势图历史月份丢失（导入/恢复后只剩最近一个月）', '走势图现在始终从定期存款记录重建完整历史'] },
   { version: '1.1.0', date: '2026-08-01', changes: ['新增：结息支持两种结算方式', '💵 现金结算：利息直接拿走，只记流水', '🏦 计入存款：利息自动转存为新定期（可选月/年定存）', '界面新增版本号与作者信息'] },
   { version: '1.0.0', date: '2026-07-28', changes: ['初始版本：月/年定存、自动结息、扣减、攒钱目标、走势图、孩子对比'] }
 ];
+
+const I18N_EN = {
+  '家庭银行': 'Family Bank',
+  '看板': 'Dashboard',
+  '理财': 'Banking',
+  '管理': 'Manage',
+  '总资产（年定存 + 月定存）': 'Total Assets (Yearly + Monthly)',
+  '资产走势': 'Asset Trend',
+  '定存占比': 'Deposit Mix',
+  '两个孩子对比': 'Kids Comparison',
+  '攒钱目标': 'Saving Goal',
+  '家长管理模式': 'Parent Mode',
+  '设定目标、扣减定存、数据备份': 'Set goals, deduct deposits, backup data',
+  '进入管理模式': 'Enter Parent Mode',
+  '退出管理模式': 'Exit Parent Mode',
+  '新增定期存款': 'New Deposit',
+  '结算利息': 'Settle Interest',
+  '月定存利息结算': 'Monthly deposit interest settlement',
+  '年定存利息结算': 'Yearly deposit interest settlement',
+  '利息结算': 'Interest Settlement',
+  '利息': 'interest',
+  '明细': 'Details',
+  '结息记录': 'Settle History',
+  '已结': 'Earned',
+  '元': '¥',
+  '目标名称': 'Goal Name',
+  '目标金额 (元)': 'Goal Amount (¥)',
+  '保存目标': 'Save Goal',
+  '删除目标': 'Delete Goal',
+  '设定目标': 'Set Goal',
+  '定存扣减': 'Deduct Deposit',
+  '定存类型': 'Deposit Type',
+  '按比例分摊': 'Proportional',
+  '指定某笔': 'Specific Deposit',
+  '扣减原因': 'Reason',
+  '确认扣减': 'Confirm Deduct',
+  '扣减记录': 'Deduction History',
+  '导出（同步用）': 'Export (Sync)',
+  '导入恢复': 'Import Restore',
+  '清零': 'Reset All',
+  '新增': 'Add',
+  '取消': 'Cancel',
+  '关闭': 'Close',
+  '返回': 'Back',
+  '确认存入': 'Confirm Deposit',
+  '确认结息': 'Confirm Settle',
+  '现金结算': 'Cash Out',
+  '计入存款': 'Roll Into Deposit',
+  '转存类型': 'Roll Type',
+  '月定存': 'Monthly',
+  '年定存': 'Yearly',
+  '结息日期': 'Settle Date',
+  '结算方式': 'Settlement Mode',
+  '本次结息明细': 'Interest Details',
+  '总计': 'Total',
+  '暂无满周期的定存可结息': 'No deposits with full periods to settle',
+  '没有可结算的利息': 'No interest to settle',
+  '该类型无定期存款': 'No deposits of this type',
+  '还没设定目标，在「管理」页设置一个吧 🎯': 'No goal set yet. Set one in Manage page 🎯',
+  '存入定期后开始显示走势': 'Chart appears after first deposit',
+  '所有数据已清零': 'All data has been reset',
+  '请选择结息日期': 'Please pick a settle date',
+  '确认取回': 'Confirm Withdraw',
+  '取回这笔': 'Withdraw This',
+  '到期取回定期': 'Matured deposit withdrawn',
+  '提前支取定期 (罚金': 'Early withdrawal (penalty ',
+  '已取回，到账': 'Withdrawn, received',
+  '撤回': 'Revert',
+  '确认撤回': 'Confirm Revert',
+  '一键迁移到结息历史': 'Migrate to settle history',
+  '确认迁移': 'Confirm Migrate',
+  '暂无扣减记录': 'No deduction records',
+  '该账户没有流水记录': 'No records for this account',
+  '历史结息': 'Settle History',
+  '更新日志': 'Changelog',
+  '点击查看更新日志': 'Click to view changelog',
+  '公众号：弱者思维体系': '公众号：弱者思维体系',
+  '结息': 'Settle',
+  '已存': 'Deposited',
+  '状态': 'Status',
+  '起息': 'Start',
+  '存期': 'Period',
+  '利率': 'Rate',
+  '本金': 'Principal',
+  '未满期': 'Not matured',
+  '已满期': 'Matured',
+  '期': '',
+  '笔': '',
+  '请选择': 'Please select',
+  '数据文件路径': 'Data File Path',
+  '家庭银行设置': 'Family Bank Settings',
+  '家庭银行数据保存的 vault 路径（相对于 vault 根目录）': 'Vault path for Family Bank data (relative to vault root)',
+  '语言 / Language': 'Language',
+  '界面显示语言（用户录入的数据不翻译）': 'UI language (user-entered data is not translated)',
+  '中文': '中文',
+  'English': 'English',
+  '导入成功': 'Import successful',
+  '导出成功': 'Export successful',
+  '已复制到剪贴板': 'Copied to clipboard',
+  '定存列表': 'Deposit List',
+  '该类型无定期存款': 'No deposits of this type',
+  '暂无定期存款，点击上方按钮存入吧': 'No deposits yet. Tap the button above to save',
+  '孩子': 'Kid',
+  '领先': 'Ahead',
+  '平手': 'Tied',
+  '总资产': 'Total Assets',
+  '目标进度': 'Goal Progress',
+  '已达成': 'Reached',
+  '距离目标还差': 'Remaining to goal'
+};
 
 function fmt(v) { return Number(v).toFixed(v % 1 === 0 ? 0 : 1); }
 
@@ -123,6 +234,53 @@ class FamilyBankView extends obsidian.ItemView {
 
   getChild() { return this.data.children[this.data.currentChild]; }
 
+  // ========================================
+  // i18n：英文界面（中文默认，词典替换）
+  // ========================================
+  lang() { return (this.plugin.settings.language || 'zh') === 'en' ? 'en' : 'zh'; }
+
+  t(text) {
+    if (this.lang() !== 'en' || !text) return text;
+    let out = String(text);
+    // 数字形态：金额/笔数/期数
+    out = out.replace(/([\d.]+)\s*元/g, '¥$1');
+    out = out.replace(/\((\d+)笔\)/g, '($1)');
+    out = out.replace(/\((\d+)期\)/g, '($1)');
+    out = out.replace(/(\d+)笔/g, '$1');
+    // 词典替换（长词优先，避免部分命中）
+    const keys = Object.keys(I18N_EN).sort((a, b) => b.length - a.length);
+    keys.forEach(k => { if (out.includes(k)) out = out.split(k).join(I18N_EN[k]); });
+    return out;
+  }
+
+  localizeDom(el) {
+    if (this.lang() !== 'en' || !el) return;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(n => { const nt = this.t(n.nodeValue); if (nt !== n.nodeValue) n.nodeValue = nt; });
+    el.querySelectorAll('[placeholder],[title]').forEach(x => {
+      const ph = x.getAttribute('placeholder');
+      if (ph) x.setAttribute('placeholder', this.t(ph));
+      const ti = x.getAttribute('title');
+      if (ti && ti.indexOf('公众号') === -1) x.setAttribute('title', this.t(ti));
+    });
+  }
+
+  setupLocalizer() {
+    if (this._obs) this._obs.disconnect();
+    let timer = null;
+    this._obs = new MutationObserver(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        this.localizeDom(this.containerEl);
+        const mc = document.getElementById('fb-modalContent');
+        if (mc) this.localizeDom(mc);
+      }, 60);
+    });
+    this._obs.observe(this.containerEl, { childList: true, subtree: true, characterData: true });
+  }
+
   recordAssetSnapshot(child, date) {
     if (!child.assetTimeline) child.assetTimeline = [];
     child.assetTimeline.push({ date, total: calcTotal(child) });
@@ -134,7 +292,7 @@ class FamilyBankView extends obsidian.ItemView {
   showToast(msg) {
     const el = document.getElementById('fb-toast');
     if (!el) return;
-    el.textContent = msg;
+    el.textContent = this.t(msg);
     el.classList.remove('hidden');
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => el.classList.add('hidden'), 2500);
@@ -282,6 +440,9 @@ class FamilyBankView extends obsidian.ItemView {
       el.addEventListener('click', () => this.switchPage(el.dataset.page));
     });
 
+    this.setupLocalizer();
+    this.localizeDom(this.containerEl);
+
     this.renderChildSwitch();
     this.renderOverview();
     this.renderDeposits();
@@ -401,7 +562,7 @@ class FamilyBankView extends obsidian.ItemView {
 
     if (merged.length < 2) {
       ctx.fillStyle = '#999'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('存入定期后开始显示走势', W / 2, H / 2);
+      ctx.fillText(this.t('存入定期后开始显示走势'), W / 2, H / 2);
       return;
     }
 
@@ -473,8 +634,8 @@ class FamilyBankView extends obsidian.ItemView {
       if (minDist > chartW / (merged.length - 1) * 1.5) { tooltip.style.display = 'none'; return; }
       const pt = plottedPoints[nearest];
       const settleAmount = settleMap[pt.date];
-      const settleLabel = settleAmount ? ' | 💰结息 +' + fmt(settleAmount) + ' 元' : '';
-      tooltip.textContent = pt.date + '  总资产 ' + fmt(pt.total) + ' 元' + settleLabel;
+      const settleLabel = settleAmount ? ' | 💰' + this.t('结息 +' + fmt(settleAmount) + ' 元') : '';
+      tooltip.textContent = pt.date + '  ' + this.t('总资产 ' + fmt(pt.total) + ' 元') + settleLabel;
       tooltip.style.display = 'block';
       const tw = tooltip.offsetWidth;
       let tx = e.clientX - rect.left - tw / 2;
@@ -1433,7 +1594,7 @@ class FamilyBankPlugin extends obsidian.Plugin {
   }
 
   async loadSettings() {
-    this.settings = Object.assign({ dataFilePath: '家庭银行数据.json' }, await this.loadData());
+    this.settings = Object.assign({ dataFilePath: '家庭银行数据.json', language: 'zh' }, await this.loadData());
   }
 
   async saveSettings() {
@@ -1463,6 +1624,21 @@ class FamilyBankSettingTab extends obsidian.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl('h2', { text: '家庭银行设置' });
+
+    new obsidian.Setting(containerEl)
+      .setName('语言 / Language')
+      .setDesc('界面显示语言（用户录入的数据不翻译）')
+      .addDropdown(dd => dd
+        .addOption('zh', '中文')
+        .addOption('en', 'English')
+        .setValue(this.plugin.settings.language || 'zh')
+        .onChange(async (value) => {
+          this.plugin.settings.language = value;
+          await this.plugin.saveSettings();
+          this.app.workspace.getLeavesOfType('family-bank').forEach(leaf => {
+            if (leaf.view && leaf.view.renderShell) leaf.view.renderShell();
+          });
+        }));
 
     new obsidian.Setting(containerEl)
       .setName('数据文件路径')
