@@ -64,14 +64,6 @@
   border-bottom-color: #2563eb;
 }
 
-.fb-header-title .fb-author {
-  font-size: 11px;
-  color: #E8730A;
-  font-weight: 400;
-  margin-left: 8px;
-  cursor: help;
-}
-
 .fb-child-switch {
   display: flex;
   gap: 8px;

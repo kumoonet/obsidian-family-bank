@@ -9,6 +9,7 @@ const DEPOSIT_TYPES = [
 ];
 
 const CHANGELOG = [
+  { version: '1.3.1', date: '2026-08-07', changes: ['优化：署名移入更新日志顶部（KuMoo · 公众号：弱者思维体系），界面更简洁'] },
   { version: '1.3.0', date: '2026-08-07', changes: ['新增：界面语言切换（设置页可选 中文 / English）', '英文模式：导航、卡片、弹窗、提示自动切换，用户录入数据保持原文', '中文为默认语言，不切换不受影响'] },
   { version: '1.2.0', date: '2026-08-07', changes: ['新增：点击版本号查看更新日志', '优化：description 支持中文搜索（搜「家庭银行」可找到）'] },
   { version: '1.1.1', date: '2026-08-07', changes: ['修复：资产走势图历史月份丢失（导入/恢复后只剩最近一个月）', '走势图现在始终从定期存款记录重建完整历史'] },
@@ -91,7 +92,8 @@ const I18N_EN = {
   '历史结息': 'Settle History',
   '更新日志': 'Changelog',
   '点击查看更新日志': 'Click to view changelog',
-  '公众号：弱者思维体系': '公众号：弱者思维体系',
+  '公众号：': 'WeChat: ',
+  '公众号：弱者思维体系': 'WeChat: 弱者思维体系',
   '结息': 'Settle',
   '已存': 'Deposited',
   '状态': 'Status',
@@ -320,7 +322,7 @@ class FamilyBankView extends obsidian.ItemView {
       <div class="fb-topbar">
         <div class="fb-header">
           <div class="fb-header-top">
-            <div class="fb-header-title"><span>家庭银行</span><small class="fb-version" title="点击查看更新日志" onclick="window.__fb.showChangelog()">Ver${this.plugin.manifest.version}</small><span class="fb-author" title="公众号：弱者思维体系">KuMoo</span></div>
+            <div class="fb-header-title"><span>家庭银行</span><small class="fb-version" title="点击查看更新日志" onclick="window.__fb.showChangelog()">Ver${this.plugin.manifest.version}</small></div>
           </div>
           <div class="fb-child-switch" id="fb-childSwitch"></div>
         </div>
@@ -843,6 +845,7 @@ class FamilyBankView extends obsidian.ItemView {
       </div>`).join('');
     this.openModal(`
       <div class="fb-modal-title">📜 更新日志</div>
+      <div style="font-size:12px;color:#E8730A;font-weight:600;margin-bottom:12px;">KuMoo · 公众号：弱者思维体系</div>
       <div style="max-height:50vh;overflow-y:auto;padding-right:4px;margin-bottom:8px;">${items}</div>
       <div class="fb-modal-actions"><button class="fb-btn fb-btn-hint fb-btn-block" onclick="window.__fb.closeModal()">关闭</button></div>
     `);
