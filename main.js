@@ -8,6 +8,13 @@ const DEPOSIT_TYPES = [
   { id: 'year', name: '年定存', rate: 0.07, rateLabel: '年 7%', periodDays: 365, emoji: '💎' }
 ];
 
+const CHANGELOG = [
+  { version: '1.2.0', date: '2026-08-07', changes: ['新增：点击版本号查看更新日志', '优化：description 支持中文搜索（搜「家庭银行」可找到）'] },
+  { version: '1.1.1', date: '2026-08-07', changes: ['修复：资产走势图历史月份丢失（导入/恢复后只剩最近一个月）', '走势图现在始终从定期存款记录重建完整历史'] },
+  { version: '1.1.0', date: '2026-08-01', changes: ['新增：结息支持两种结算方式', '💵 现金结算：利息直接拿走，只记流水', '🏦 计入存款：利息自动转存为新定期（可选月/年定存）', '界面新增版本号与作者信息'] },
+  { version: '1.0.0', date: '2026-07-28', changes: ['初始版本：月/年定存、自动结息、扣减、攒钱目标、走势图、孩子对比'] }
+];
+
 function fmt(v) { return Number(v).toFixed(v % 1 === 0 ? 0 : 1); }
 
 function calcInterest(principal, rate, rateType, fromDate, toDate) {
@@ -155,7 +162,7 @@ class FamilyBankView extends obsidian.ItemView {
       <div class="fb-topbar">
         <div class="fb-header">
           <div class="fb-header-top">
-            <div class="fb-header-title"><span>家庭银行</span><small>Ver${this.plugin.manifest.version}</small><span class="fb-author" title="公众号：弱者思维体系">KuMoo</span></div>
+            <div class="fb-header-title"><span>家庭银行</span><small class="fb-version" title="点击查看更新日志" onclick="window.__fb.showChangelog()">Ver${this.plugin.manifest.version}</small><span class="fb-author" title="公众号：弱者思维体系">KuMoo</span></div>
           </div>
           <div class="fb-child-switch" id="fb-childSwitch"></div>
         </div>
@@ -665,6 +672,21 @@ class FamilyBankView extends obsidian.ItemView {
   // ========================================
   // 结息弹窗
   // ========================================
+  showChangelog() {
+    const items = CHANGELOG.map(c => `
+      <div style="margin-bottom:16px;">
+        <div style="font-size:14px;font-weight:700;color:#E8730A;margin-bottom:6px;">Ver${c.version} <span style="color:#999;font-weight:400;font-size:12px;">${c.date}</span></div>
+        <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--text-normal);">
+          ${c.changes.map(ch => `<li style="margin:4px 0;">${ch}</li>`).join('')}
+        </ul>
+      </div>`).join('');
+    this.openModal(`
+      <div class="fb-modal-title">📜 更新日志</div>
+      <div style="max-height:50vh;overflow-y:auto;padding-right:4px;margin-bottom:8px;">${items}</div>
+      <div class="fb-modal-actions"><button class="fb-btn fb-btn-hint fb-btn-block" onclick="window.__fb.closeModal()">关闭</button></div>
+    `);
+  }
+
   showSettleModal(typeId) {
     const child = this.getChild();
     const typeConfig = DEPOSIT_TYPES.find(t => t.id === typeId);
