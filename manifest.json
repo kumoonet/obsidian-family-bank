@@ -1,9 +1,9 @@
 {
   "id": "family-bank",
-  "name": "家庭银行",
+  "name": "Family Bank",
   "version": "1.1.1",
   "minAppVersion": "0.15.0",
-  "description": "家庭代币/定期存款管理系统，支持月/年定存、结息（现金/转存）、扣减、走势图",
+  "description": "Manage monthly/yearly fixed deposits for children. Auto interest settlement, deduction, and asset chart.",
   "author": "KuMoo",
   "authorUrl": "",
   "isDesktopOnly": false
