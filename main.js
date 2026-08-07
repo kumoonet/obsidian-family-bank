@@ -155,7 +155,7 @@ class FamilyBankView extends obsidian.ItemView {
       <div class="fb-topbar">
         <div class="fb-header">
           <div class="fb-header-top">
-            <div class="fb-header-title"><span>家庭银行</span><small>KuMoo</small></div>
+            <div class="fb-header-title"><span>家庭银行</span><small>Ver${this.plugin.manifest.version}</small><span class="fb-author" title="公众号：弱者思维体系">KuMoo</span></div>
           </div>
           <div class="fb-child-switch" id="fb-childSwitch"></div>
         </div>
@@ -357,9 +357,10 @@ class FamilyBankView extends obsidian.ItemView {
     const W = canvas.width, H = canvas.height;
     ctx.clearRect(0, 0, W, H);
 
-    let points = (child.assetTimeline || []).map(p => ({ date: p.date, total: p.total })).sort((a, b) => a.date.localeCompare(b.date));
+    let points = [];
 
-    if (points.length === 0 && child.deposits.length > 0) {
+    // 1. 从 deposits + deductions 重建完整历史曲线（无论 assetTimeline 是否为空）
+    if (child.deposits.length > 0) {
       const events = [];
       const allDeductions = child.deductions || [];
       child.deposits.forEach(d => {
@@ -376,6 +377,9 @@ class FamilyBankView extends obsidian.ItemView {
       events.forEach(e => { running += e.delta; points.push({ date: e.date, total: Math.round(running * 100) / 100 }); });
     }
 
+    // 2. 合并 assetTimeline 快照（同日期覆盖重建值）
+    (child.assetTimeline || []).forEach(p => points.push({ date: p.date, total: p.total }));
+
     const today = new Date().toISOString().slice(0, 10);
     const currentTotal = calcTotal(child);
     points.push({ date: today, total: currentTotal });
@@ -386,6 +390,7 @@ class FamilyBankView extends obsidian.ItemView {
       if (existing) existing.total = p.total;
       else merged.push(p);
     });
+    merged.sort((a, b) => a.date.localeCompare(b.date));
 
     if (merged.length < 2) {
       ctx.fillStyle = '#999'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
